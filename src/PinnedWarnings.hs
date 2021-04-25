@@ -3,19 +3,19 @@ module PinnedWarnings
   ( plugin
   ) where
 
-import Control.Concurrent.MVar
-import Control.Monad
-import Control.Monad.IO.Class
-import Data.ByteString.Char8 qualified as BS
-import Data.IORef
-import Data.List
-import Data.Map.Strict qualified as M
-import Data.Maybe
-import Data.Set qualified as S
-import System.Directory qualified as Dir
-import System.IO.Unsafe (unsafePerformIO)
+import           Control.Concurrent.MVar
+import           Control.Monad
+import           Control.Monad.IO.Class
+import qualified Data.ByteString.Char8 as BS
+import           Data.IORef
+import           Data.List
+import qualified Data.Map.Strict as M
+import           Data.Maybe
+import qualified Data.Set as S
+import qualified System.Directory as Dir
+import           System.IO.Unsafe (unsafePerformIO)
 
-import GhcFacade qualified as Ghc
+import qualified GhcFacade as Ghc
 
 type ModuleFile = BS.ByteString
 
@@ -36,8 +36,8 @@ tcPlugin :: Ghc.TcPlugin
 tcPlugin =
   Ghc.TcPlugin
     { Ghc.tcPluginInit  = initTcPlugin
-    , Ghc.tcPluginSolve = \(sw, countRef) _ _ wanteds ->
-        checkWanteds sw countRef wanteds
+    , Ghc.tcPluginSolve = \(sw, counterRef) _ _ wanteds ->
+        checkWanteds sw counterRef wanteds
     , Ghc.tcPluginStop  = const $ pure ()
     }
 
@@ -46,7 +46,7 @@ initTcPlugin =
   (,) <$> lookupShowWarnings
       <*> Ghc.tcPluginIO (newIORef 0)
 
--- Gets a reference to the 'ShowWarnings' constraint
+-- | Gets a reference to the 'ShowWarnings' constraint
 lookupShowWarnings :: Ghc.TcPluginM Ghc.TyCon
 lookupShowWarnings = do
   result <- Ghc.findImportedModule
@@ -66,19 +66,19 @@ checkWanteds :: Ghc.TyCon
              -> IORef Int
              -> [Ghc.Ct]
              -> Ghc.TcPluginM Ghc.TcPluginResult
-checkWanteds sw countRef
+checkWanteds sw counterRef
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
   where
     go ct@Ghc.CDictCan { Ghc.cc_class = cls }
       | Ghc.classTyCon cls == sw = do
-          count <- Ghc.tcPluginIO $ readIORef countRef
+          counter <- Ghc.tcPluginIO $ readIORef counterRef
 
           -- for some reason warnings only appear if they are added on
           -- particular iterations.
-          when (count == 2) addWarningsToContext
+          when (counter == 2) addWarningsToContext
 
-          Ghc.tcPluginIO $ modifyIORef' countRef succ
+          Ghc.tcPluginIO $ modifyIORef' counterRef succ
 
           pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
 
@@ -118,8 +118,8 @@ insertModuleWarnings modSummary tcGblEnv = do
   let modFile = BS.pack $ Ghc.ms_hspp_file modSummary
       onlyThisMod w =
         case Ghc.errMsgSpan w of
-          Ghc.RealSrcSpan span ->
-            Ghc.bytesFS (Ghc.srcSpanFile span) == modFile
+          Ghc.RealSrcSpan' span ->
+            Ghc.bytesFS' (Ghc.srcSpanFile span) == modFile
           _ -> False
 
       warnsForMod = Ghc.filterBag onlyThisMod warns

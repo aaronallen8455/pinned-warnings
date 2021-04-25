@@ -6,4 +6,5 @@ import Data.List
 main :: IO ()
 main = do
   s <- getLine
+  x <- getLine
   putStrLn "Hello, Haskell!"
