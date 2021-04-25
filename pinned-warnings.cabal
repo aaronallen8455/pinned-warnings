@@ -7,15 +7,18 @@ name:                pinned-warnings
 version:             0.1.0.0
 synopsis: Preserve warnings in a GHCi session
 description: Please see the README on GitHub at <https://github.com/aaronallen8455/pinned-warnings#readme>
+homepage:       https://github.com/aaronallen8455/pinned-warnings#readme
+bug-reports:    https://github.com/aaronallen8455/pinned-warnings/issues
+license:        BSD-3-Clause
+license-file:   LICENSE
 
--- bug-reports:
--- license:
--- license-file:        LICENSE
--- author:
+author: Aaron Allen
 maintainer:          aaronallen8455@gmail.com
--- copyright:
--- category:
-extra-source-files:  CHANGELOG.md
+copyright: 2021 Aaron Allen
+category: Utility
+extra-source-files:
+  README.md
+  CHANGELOG.md
 tested-with: GHC ==8.8.4 || ==8.10.4 || ==9.0.1
 
 library
