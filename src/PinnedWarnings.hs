@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Plugin
+module PinnedWarnings
   ( plugin
   ) where
 
@@ -12,7 +12,6 @@ import Data.List
 import Data.Map.Strict qualified as M
 import Data.Maybe
 import Data.Set qualified as S
-import GHC.TcPluginM.Extra qualified as Ext
 import System.Directory qualified as Dir
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -50,9 +49,16 @@ initTcPlugin =
 -- Gets a reference to the 'ShowWarnings' constraint
 lookupShowWarnings :: Ghc.TcPluginM Ghc.TyCon
 lookupShowWarnings = do
-  mod <- Ext.lookupModule (Ghc.mkModuleName "ShowWarnings") "pinned-warnings"
-  name <- Ext.lookupName mod $ Ghc.mkTcOcc "ShowWarnings"
-  Ghc.classTyCon <$> Ghc.tcLookupClass name
+  result <- Ghc.findImportedModule
+              (Ghc.mkModuleName "ShowWarnings")
+              (Just  "pinned-warnings")
+
+  case result of
+    Ghc.Found _ mod -> do
+      name <- Ghc.lookupOrig mod $ Ghc.mkTcOcc "ShowWarnings"
+      Ghc.classTyCon <$> Ghc.tcLookupClass name
+
+    _ -> error "ShowWarnings module not found"
 
 -- | If any wanted constraints are for 'ShowWarnings', then inject any pinned
 -- warnings into GHC.
@@ -106,18 +112,17 @@ pruneDeleted = Ghc.tcPluginIO . modifyMVar_ globalState $ \warns -> do
 -- | After type checking a module, pin any warnings pertaining to it.
 insertModuleWarnings :: Ghc.ModSummary -> Ghc.TcGblEnv -> Ghc.TcM Ghc.TcGblEnv
 insertModuleWarnings modSummary tcGblEnv = do
-  let modFile = BS.pack $ Ghc.ms_hspp_file modSummary
-
   lclErrsRef <- Ghc.tcl_errs . Ghc.env_lcl <$> Ghc.getEnv
   (warns, _) <- liftIO $ readIORef lclErrsRef
 
-  let filterWarns w =
+  let modFile = BS.pack $ Ghc.ms_hspp_file modSummary
+      onlyThisMod w =
         case Ghc.errMsgSpan w of
           Ghc.RealSrcSpan span ->
             Ghc.bytesFS (Ghc.srcSpanFile span) == modFile
           _ -> False
 
-      warnsForMod = Ghc.filterBag filterWarns warns
+      warnsForMod = Ghc.filterBag onlyThisMod warns
 
   -- Replace any existing pinned warnings with new ones for this module
   liftIO . modifyMVar_ globalState

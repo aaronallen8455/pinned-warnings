@@ -5,8 +5,9 @@ cabal-version:       2.4
 
 name:                pinned-warnings
 version:             0.1.0.0
--- synopsis:
--- description:
+synopsis: Preserve warnings in a GHCi session
+description: Please see the README on GitHub at <https://github.com/aaronallen8455/pinned-warnings#readme>
+
 -- bug-reports:
 -- license:
 -- license-file:        LICENSE
@@ -15,25 +16,25 @@ maintainer:          aaronallen8455@gmail.com
 -- copyright:
 -- category:
 extra-source-files:  CHANGELOG.md
+tested-with: GHC ==8.10.4
 
 library
-  exposed-modules:     Plugin, ShowWarnings
+  exposed-modules:     PinnedWarnings, ShowWarnings
   other-modules:       GhcFacade
   default-extensions:  ImportQualifiedPost
   build-depends:       base ^>=4.14.1.0,
-                       ghc,
-                       ghc-tcplugins-extra,
+                       ghc >= 8.10,
                        bytestring,
                        containers,
                        directory
   hs-source-dirs:      src
   default-language:    Haskell2010
 
-executable pinned-warnings-exe
+executable sandbox
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
   build-depends:       base ^>=4.14.1.0, pinned-warnings
   hs-source-dirs:      app
   default-language:    Haskell2010
-  ghc-options: -fplugin Plugin
+  ghc-options: -fplugin PinnedWarnings

@@ -1,5 +1,4 @@
-{ mkDerivation, base, bytestring, containers, directory, ghc
-, ghc-tcplugins-extra, lib
+{ mkDerivation, base, bytestring, containers, directory, ghc, lib
 }:
 mkDerivation {
   pname = "pinned-warnings";
@@ -8,7 +7,7 @@ mkDerivation {
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    base bytestring containers directory ghc ghc-tcplugins-extra
+    base bytestring containers directory ghc
   ];
   executableHaskellDepends = [ base ];
   license = "unknown";
