@@ -15,7 +15,7 @@ the necessary plugin. Add `pinned-warnings` as a package dependency to avoid
 having to include the additional argument.
 ```
 cabal update
-cabal new-repl -b pinned-warnings --ghc-options="-fplugin PinnedWarnings"
+cabal new-repl -b pinned-warnings --repl-options="-fplugin PinnedWarnings"
 
 stack update
 stack repl --package pinned-warnings --ghci-options "-fplugin PinnedWarnings"

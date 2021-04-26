@@ -2,7 +2,7 @@
 }:
 mkDerivation {
   pname = "pinned-warnings";
-  version = "0.1.0.0";
+  version = "0.1.0.1";
   src = ./.;
   libraryHaskellDepends = [
     base bytestring containers directory ghc
