@@ -60,7 +60,7 @@ lookupShowWarnings = do
 
     _ -> error "ShowWarnings module not found"
 
--- | If any wanted constraints are for 'ShowWarnings', then inject any pinned
+-- | If any wanted constraints are for 'ShowWarnings', then inject the pinned
 -- warnings into GHC.
 checkWanteds :: Ghc.TyCon
              -> IORef Int
@@ -90,8 +90,7 @@ addWarningsToContext = do
   errsRef <- Ghc.tcl_errs . snd <$> Ghc.getEnvs
 
   pruneDeleted
-  pinnedWarns <- Ghc.listToBag
-               . foldMap Ghc.bagToList
+  pinnedWarns <- Ghc.unionManyBags . M.elems
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
