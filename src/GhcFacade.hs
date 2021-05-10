@@ -2,30 +2,32 @@
 {-# LANGUAGE PatternSynonyms #-}
 module GhcFacade
   ( module X
-  , pattern RealSrcSpan'
-  , bytesFS'
+  , pattern RealSrcLoc'
+  , log_action'
   ) where
 
-import qualified Data.ByteString.Char8 as BS
-
 #if MIN_VERSION_ghc(9,0,0)
-import GHC.Data.Bag as X
-import GHC.Tc.Types as X
-import GHC.Tc.Plugin as X
-import GHC.Driver.Plugins as X hiding (TcPlugin)
-import GHC.Data.IOEnv as X
-import GHC.Core.Make as X
-import GHC.Tc.Types.Evidence as X
 import GHC as X
-import GHC.Data.FastString as X
-import GHC.Utils.Error as X
 import GHC.Core.Class as X
+import GHC.Core.Make as X
+import GHC.Data.Bag as X
+import GHC.Data.FastString as X
+import GHC.Data.IOEnv as X
+import GHC.Driver.Plugins as X hiding (TcPlugin)
+import GHC.Driver.Session
+import GHC.Driver.Types as X
+import GHC.Tc.Plugin as X
+import GHC.Tc.Types as X
 import GHC.Tc.Types.Constraint as X
+import GHC.Tc.Types.Evidence as X
 import GHC.Types.Name.Occurrence as X
+import GHC.Types.SrcLoc as X
+import GHC.Utils.Error as X
 
-#elif MIN_VERSION_ghc(8,8,0)
+#elif MIN_VERSION_ghc(8,10,0)
 import Bag as X
 import Class as X
+import Constraint as X
 import DynFlags as X
 import ErrUtils as X
 import FastString as X
@@ -37,27 +39,27 @@ import MkCore as X
 import OccName as X
 import Outputable as X
 import Plugins as X hiding (TcPlugin)
+import SrcLoc as X
 import TcEvidence as X
 import TcPluginM as X
 import TcRnTypes as X
 #endif
 
-#if MIN_VERSION_ghc(8,10,0) && __GLASGOW_HASKELL__ < 900
-import Constraint as X
-#endif
-
-pattern RealSrcSpan' :: RealSrcSpan -> SrcSpan
-pattern RealSrcSpan' s <-
+pattern RealSrcLoc' :: RealSrcLoc -> SrcLoc
+pattern RealSrcLoc' s <-
 #if MIN_VERSION_ghc(9,0,1)
-    RealSrcSpan s x
-#elif MIN_VERSION_ghc(8,8,0)
-    RealSrcSpan s
+    RealSrcLoc s _
+#elif MIN_VERSION_ghc(8,10,0)
+    RealSrcLoc s
 #endif
 
-bytesFS' :: FastString -> BS.ByteString
-bytesFS' =
-#if MIN_VERSION_ghc(8,10,0)
-  bytesFS
-#elif MIN_VERSION_ghc(8,8,0)
-  BS.pack . unpackFS
+log_action' :: LogAction -> (DynFlags -> Severity -> SrcSpan -> MsgDoc -> IO ()) -> LogAction
+#if MIN_VERSION_ghc(9,0,1)
+log_action' action withStuff dflags warnReason severity srcSpan msgDoc = do
+  withStuff dflags severity srcSpan msgDoc
+  action dflags warnReason severity srcSpan msgDoc
+#elif MIN_VERSION_ghc(8,10,0)
+log_action' action withStuff dflags warnReason severity srcSpan pprStyle msgDoc = do
+  withStuff dflags severity srcSpan msgDoc
+  action dflags warnReason severity srcSpan pprStyle msgDoc
 #endif

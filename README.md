@@ -34,9 +34,16 @@ You can define a custom GHCi command in your `.ghci` file that adds the
 ```
 With this you can simply use `:sw` to view warnings.
 
+### Fixing warnings
+There is limited functionality for automatically fixing warnings. Currently
+only warnings due to redundant module import statements are corrected but there
+is room for improvement in this regard.
+
+To use this functionality, have the `ShowWarnings` module added to your GHCi
+session then evaluate `fixWarnings`.
+
 ### Known limitations
-- Warnings produced outside of module type checking are not captured, for
-  example those related to `.cabal` file omissions.
-- Only the specified versions of GHC are supported
+- Warnings that aren't for a specific module are not captured.
+- Only the versions of GHC specified in the cabal file are supported (8.10, 9.0)
 - If you make changes to files and call `showWarnings` without reloading first,
   the messages may not be referencing the right code anymore.
