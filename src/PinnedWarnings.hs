@@ -5,6 +5,7 @@ module PinnedWarnings
   ( plugin
   ) where
 
+import           Control.Applicative ((<|>))
 import           Control.Concurrent.MVar
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -71,6 +72,7 @@ plugin =
     { Ghc.tcPlugin = const $ Just tcPlugin
     , Ghc.parsedResultAction = const resetPinnedWarnsForMod
     , Ghc.dynflagsPlugin = const addWarningCapture
+    , Ghc.pluginRecompile = Ghc.purePlugin
     }
 
 tcPlugin :: Ghc.TcPlugin
@@ -227,7 +229,7 @@ fixWarning :: WarningsWithModDate -> IO WarningsWithModDate
 fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
   (pairs, files) <- (`runStateT` M.empty)
            . flip filterM (reverse $ M.toList warnMap) $ \case
-    ((start, end), warnSet)
+    ((start, _), warnSet)
       | Alt (Just reWarn)
           <- foldMap (Alt . parseRedundancyWarn) warnSet
       -> do
@@ -240,16 +242,27 @@ fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
                     pure
                     mCached
 
-            mNewSrcLines <- liftIO $
-              fixRedundancyWarning start end modifiedAt reWarn srcLines
+            fileModified <- liftIO $ Dir.getModificationTime file
+            if fileModified /= modifiedAt
+               then do
+                 -- Do not attempt to edit if file has been touched since last reload
+                 liftIO . putStrLn
+                   $ "'" <> file
+                   <> "' has been modified since last compiled. Reload and try again."
+                 pure True
 
-            case mNewSrcLines of
-              Nothing -> pure True
+               else do
+                 let startLine = Ghc.srcLocLine start
+                     mNewSrcLines =
+                       fixRedundancyWarning startLine reWarn srcLines
 
-              Just newSrcLines -> do
-                modify' $ M.insert file newSrcLines
+                 case mNewSrcLines of
+                   Nothing -> pure True
 
-                pure False
+                   Just newSrcLines -> do
+                     modify' $ M.insert file newSrcLines
+
+                     pure False
 
     _ -> pure True
 
@@ -275,34 +288,100 @@ data RedundancyWarn
   deriving Show
 
 -- | Attempt to fix redundant import warning.
-fixRedundancyWarning :: Ghc.RealSrcLoc
-                     -> Ghc.RealSrcLoc
-                     -> UTCTime
+-- Returns 'Nothing' if incapable of fixing.
+fixRedundancyWarning :: Int
                      -> RedundancyWarn
                      -> [BS.ByteString]
-                     -> IO (Maybe [BS.ByteString])
-fixRedundancyWarning start end lastModified warn srcLines = do
-  let file = Ghc.unpackFS $ Ghc.srcLocFile start
+                     -> Maybe [BS.ByteString]
+fixRedundancyWarning startLine warn srcLines =
+  -- The span for redundant errors is only ever a single line. This means we
+  -- must search for the end of the import statement. If this a warning about a
+  -- single import thing, the span line may not encompass the start of the
+  -- import statement so we must search for that as well.
 
-  fileModified <- Dir.getModificationTime file
+  let (before, stmt : after) = splitAt (startLine - 1) srcLines
 
-  if fileModified /= lastModified
-     then do
-       putStrLn $ "'" <> file <> "' has been modified since warnings were last collected."
-       pure Nothing
+      isStart bs = (== "import") . BS.take 6 $ BS.dropSpace bs
 
-     else
-       case warn of
-         WholeModule -> do
-           let startLine = Ghc.srcLocLine start
-               endLine = Ghc.srcLocLine end
-               (before, rest) = splitAt (startLine - 1) srcLines
-               (_, after) = splitAt (endLine - startLine + 1) rest
+      (before', stmt')
+        | isStart stmt = (before, [stmt])
+        | otherwise =
+          let (inS, st : rs) = break isStart $ stmt : reverse before
+           in (reverse rs, st : reverse inS)
 
-           pure . Just $ before <> after
+      (revStmt'', after') = splitAtImportEnd $ stmt' <> after
 
-         -- TODO
-         IndividualThings _things -> pure Nothing
+-- can count the number of opening and closing parens to determine when the
+-- end of the import statement is reached.
+-- elemIndices
+
+   in case warn of
+        WholeModule ->
+          Just $ before <> after
+
+        IndividualThings things ->
+          (<> after') . (before' <>) . BS.lines <$>
+            foldM fixRedundantThing
+                  (BS.unlines $ reverse revStmt'')
+                  things
+
+splitAtImportEnd :: [BS.ByteString] -> ([BS.ByteString], [BS.ByteString])
+splitAtImportEnd ls = go 0 0 ([], ls) where
+  go o c acc
+    | o /= 0 , o == c
+    = acc
+  go _ _ acc@(_, []) = acc
+  go o c (stmt, r:est) =
+    let addO = length $ BS.elemIndices '(' r
+        addC = length $ BS.elemIndices ')' r
+     in go (o + addO) (c + addC) (r : stmt, est)
+
+-- | Removes a particular thing from an import list without disrupting the
+-- formatting. Returns 'Nothing' if the thing doesn't exist or appears more
+-- than once.
+--
+-- Edges cases not handled:
+-- - Comments interspersed in the statement that mention the thing
+fixRedundantThing :: BS.ByteString -> String -> Maybe BS.ByteString
+fixRedundantThing stmt thing
+  | (start, match) <- BS.breakSubstring thingBS stmt
+  , not (BS.null match)
+  , isSeparator . BS.take 1 $ BS.drop thingLen match
+  , isCellStart . BS.take 1 $ BS.reverse start
+
+  -- check that there isn't a second match
+  , (start2, match2) <- BS.breakSubstring thingBS (BS.drop thingLen match)
+  , BS.null match2
+      || not
+         ( isSeparator (BS.take 1 $ BS.drop thingLen match2)
+        && isCellStart (BS.take 1 $ BS.reverse start2)
+         )
+
+  , let start' = BS.dropWhileEnd (\c -> c /= ',' && c /= '(') start
+        end = dropRest
+            . BS.dropSpace
+            $ BS.drop thingLen match
+
+  = case BS.take 1 end of
+      "," -> Just $ start' <> BS.drop 1 end
+      ")" -> Just $ BS.take (BS.length start' - 1) start' <> end
+      _   -> Nothing
+
+  | otherwise = Nothing
+  where
+    thingBS = BS.pack thing
+    thingLen = BS.length thingBS
+    isSeparator c = BS.all isSpace c || c `elem` [",", "(", ")"]
+    isCellStart c = BS.all isSpace c || c `elem` [",", "("]
+    dropRest bs = case BS.uncons bs of
+                    Nothing -> ""
+                    -- Constructors of a type or methods of a class
+                    Just (c, r)
+                      | c == '(' -> BS.dropWhile (\x -> x /= ',' && x /= ')')
+                                  . BS.drop 1
+                                  $ BS.dropWhile (/= ')') r
+
+                    _ -> BS.dropSpace bs
 
 parseRedundancyWarn :: Warning -> Maybe RedundancyWarn
 parseRedundancyWarn (Warning warn) =
@@ -313,6 +392,7 @@ parseRedundancyWarn (Warning warn) =
 redundancyWarnParser :: P.ReadP RedundancyWarn
 redundancyWarnParser = do
   _ <- P.string "The import of ‘"
+   <|> P.string "The qualified import of ‘"
 
   inQuotes <-
     P.sepBy1 (P.munch1 $ \c -> not (isSpace c) && c /= ',' && c /= '’')
@@ -328,7 +408,8 @@ redundancyWarnParser = do
            *> P.string "’ is redundant"
             )
 
-      wholeMod = WholeModule <$ (P.skipSpaces *> P.string "is redundant")
+      wholeMod = WholeModule
+              <$ (P.skipSpaces *> P.string "is redundant")
 
   result <- P.choice [terms, wholeMod]
 
