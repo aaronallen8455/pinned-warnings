@@ -4,7 +4,7 @@ cabal-version:       2.4
 -- http://haskell.org/cabal/users-guide/
 
 name:                pinned-warnings
-version:             0.1.0.2
+version:             0.1.0.3
 synopsis: Preserve warnings in a GHCi session
 description: Please see the README on GitHub at <https://github.com/aaronallen8455/pinned-warnings#readme>
 homepage:       https://github.com/aaronallen8455/pinned-warnings#readme
@@ -15,7 +15,7 @@ license-file:   LICENSE
 author: Aaron Allen
 maintainer:          aaronallen8455@gmail.com
 copyright: 2021 Aaron Allen
-category: Utility
+category: Utility, Development
 extra-source-files:
   README.md
   CHANGELOG.md
@@ -23,7 +23,11 @@ tested-with: GHC ==8.10.4 || ==9.0.1
 
 library
   exposed-modules:     PinnedWarnings, ShowWarnings
-  other-modules:       GhcFacade
+
+  other-modules:       Internal.GhcFacade
+                       Internal.FixWarnings
+                       Internal.Types
+
   build-depends:       ghc              >= 8.8 && < 9.1,
                        base             >= 4.14.1 && < 5,
                        bytestring       >= 0.10.12 && < 0.11,
@@ -35,3 +39,13 @@ library
   default-language:    Haskell2010
   ghc-options: -Wall
                -Wincomplete-patterns
+
+test-suite pinned-warnings-test
+  main-is: Spec.hs
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  build-depends: base,
+                 pinned-warnings,
+                 tasty,
+                 tasty-hunit,
+  default-language: Haskell2010

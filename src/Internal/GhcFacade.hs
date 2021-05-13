@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE PatternSynonyms #-}
-module GhcFacade
+module Internal.GhcFacade
   ( module X
   , pattern RealSrcLoc'
   , log_action'
