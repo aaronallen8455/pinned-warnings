@@ -3,6 +3,7 @@
 module Internal.FixWarnings
   ( fixWarning
   , fixRedundancyWarning
+  , RedundancyWarn(..)
   ) where
 
 import           Control.Applicative ((<|>))
@@ -136,33 +137,47 @@ fixRedundantThing :: BS.ByteString -> String -> Maybe BS.ByteString
 fixRedundantThing stmt thing
   | (start, match) <- BS.breakSubstring thingBS stmt
   , not (BS.null match)
-  , isSeparator . BS.take 1 $ BS.drop thingLen match
-  , isCellStart . BS.take 1 $ BS.reverse start
+  , isSeparator $ BS.drop thingLen match
+  , isCellStart $ BS.reverse start
 
-  -- check that there isn't a second match
+  -- check that there isn't a second valid match
   , (start2, match2) <- BS.breakSubstring thingBS (BS.drop thingLen match)
   , BS.null match2
       || not
-         ( isSeparator (BS.take 1 $ BS.drop thingLen match2)
-        && isCellStart (BS.take 1 $ BS.reverse start2)
+         ( isSeparator (BS.drop thingLen match2)
+        && isCellStart (BS.reverse start2)
          )
 
-  , let start' = BS.dropWhileEnd (\c -> c /= ',' && c /= '(') start
+    -- preserve the whitespace immediately after the ',' or '('
+  , let start' = let (s, e) = BS.breakEnd (`elem` [',', '(']) start
+                  in s <> BS.takeWhile isSpace e
+
         end = dropRest
             . BS.dropSpace
             $ BS.drop thingLen match
 
-  = case BS.take 1 end of
-      "," -> Just $ start' <> BS.drop 1 end
-      ")" -> Just $ BS.take (BS.length start' - 1) start' <> end
-      _   -> Nothing
+  = BS.uncons end >>= \case
+      (',', end') -> Just $ start' <> BS.dropSpace end'
+      -- If bound on the right by ')', remove the suffix containing ',' from start
+      (')', _) -> Just $ BS.init (BS.dropWhileEnd isSpace start') <> end
+      _ -> Nothing
 
   | otherwise = Nothing
   where
-    thingBS = BS.pack thing
+    thingBS | isOperator bs = "(" <> bs <> ")"
+            | otherwise = bs
+            where bs = BS.pack thing
     thingLen = BS.length thingBS
-    isSeparator c = BS.all isSpace c || c `elem` [",", "(", ")"]
-    isCellStart c = BS.all isSpace c || c `elem` [",", "("]
+
+    isSeparator = headPred $ \c -> isSpace c || c `elem` [',', '(', ')']
+    isCellStart = headPred $ \c -> isSpace c || c `elem` [',', '(']
+    isOperator = headPred (`elem` opChars)
+        where
+          opChars :: String
+          opChars = ":!#$%&*+./<=>?@\\^|-~"
+    headPred :: (Char -> Bool) -> BS.ByteString -> Bool
+    headPred p = maybe False (p . fst) . BS.uncons
+
     dropRest bs = case BS.uncons bs of
                     Nothing -> ""
                     -- Constructors of a type or methods of a class
@@ -216,4 +231,3 @@ redundancyWarnParser = do
   _ <- P.munch (const True)
 
   pure result
-
