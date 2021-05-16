@@ -3,7 +3,7 @@
 }:
 mkDerivation {
   pname = "pinned-warnings";
-  version = "0.1.0.5";
+  version = "0.1.0.6";
   src = ./.;
   libraryHaskellDepends = [
     base bytestring containers directory ghc time transformers

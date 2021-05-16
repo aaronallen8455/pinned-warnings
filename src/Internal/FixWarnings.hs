@@ -13,6 +13,7 @@ import           Control.Monad.Trans.State
 import           Data.Bifunctor (first)
 import qualified Data.ByteString.Char8 as BS
 import           Data.Char (isSpace)
+import           Data.Maybe (isJust)
 import           Data.Monoid (Alt(..))
 import qualified Data.Map.Strict as M
 import qualified System.Directory as Dir
@@ -37,6 +38,7 @@ fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
 
         mCached <- gets (M.lookup file)
 
+        -- Get the src lines from the cache or read it from the file
         srcLines <-
           maybe (liftIO . fmap BS.lines $ BS.readFile file)
                 pure
@@ -105,9 +107,19 @@ fixRedundancyWarning startLine warn srcLines =
 
       (stmt'', after') = splitAtImportEnd $ stmt' <> after
 
+      hasExplicitList
+        -- Check the next line to see if contains an explicit import list
+        | a : _ <- after
+        , BS.length (BS.takeWhile isSpace a)
+            > BS.length (BS.takeWhile isSpace stmt)
+        , BS.take 1 (BS.dropSpace a) == "("
+          = True
+        | otherwise = isJust (BS.elemIndex '(' stmt)
+
    in case warn of
-        WholeModule ->
-          Just $ before <> after
+        WholeModule
+          | hasExplicitList -> Just $ before <> after'
+          | otherwise       -> Just $ before <> after
 
         IndividualThings things ->
           (<> after') . (before' <>) . BS.lines <$>
@@ -178,6 +190,7 @@ fixRedundantThing stmt thing
     headPred :: (Char -> Bool) -> BS.ByteString -> Bool
     headPred p = maybe False (p . fst) . BS.uncons
 
+    -- Remove the portion to the right of the match up to the cell terminator
     dropRest bs = case BS.uncons bs of
                     Nothing -> ""
                     -- Constructors of a type or methods of a class

@@ -45,6 +45,15 @@ tests =
 
       fixRedundancyWarning 1 (IndividualThings [":~:"]) [input11]
         @?= Just [output11]
+
+      fixRedundancyWarning 1 WholeModule input13
+        @?= Just output13
+
+      fixRedundancyWarning 1 WholeModule input14
+        @?= Just output14
+
+      fixRedundancyWarning 1 WholeModule input15
+        @?= Just output15
   ]
 
 input1, output1 :: BS.ByteString
@@ -116,3 +125,24 @@ output11 = "import Foo (foo, baz)"
 input12, output12 :: BS.ByteString
 input12  = "import Foo (foo, (:~:)(one, two), baz)"
 output12 = "import Foo (foo, (:~:)(one), baz)"
+
+input13, output13 :: [BS.ByteString]
+input13 = [ "import Foo"
+          , "  (one, two, three)"
+          , "import Bar"
+          ]
+output13 = [ "import Bar" ]
+
+input14, output14 :: [BS.ByteString]
+input14 = [ "import Foo (one"
+          , "           ,two"
+          , "           )"
+          , "import Bar"
+          ]
+output14 = [ "import Bar" ]
+
+input15, output15 :: [BS.ByteString]
+input15 = [ "import Foo"
+          , "import Bar"
+          ]
+output15 = [ "import Bar" ]
