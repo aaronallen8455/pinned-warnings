@@ -96,7 +96,7 @@ output6 = [ "import Foo.Bar ( foo"
 input7, output7 :: [BS.ByteString]
 input7  = [ "import Foo.Bar"
           , "  ( foo"
-          , "  , bar"
+          , "  , pattern bar"
           , "  , baz"
           , "  )"
           ]

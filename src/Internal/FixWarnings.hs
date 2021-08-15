@@ -81,8 +81,6 @@ fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
 
 fixWarning w = pure w
 
--- TODO handle operators
-
 -- | Attempt to fix redundant import warning.
 -- Returns 'Nothing' if incapable of fixing.
 fixRedundancyWarning :: Int
@@ -97,7 +95,7 @@ fixRedundancyWarning startLine warn srcLines =
 
   let (before, stmt : after) = splitAt (startLine - 1) srcLines
 
-      isStart bs = (== "import") . BS.take 6 $ BS.dropSpace bs
+      isStart bs = "import" `BS.isPrefixOf` BS.dropSpace bs
 
       (before', stmt')
         | isStart stmt = (before, [stmt])
