@@ -20,8 +20,8 @@ import qualified Internal.FixWarnings as FW
 import qualified Internal.GhcFacade as Ghc
 import           Internal.Types
 
--- The infamous mutable global trick.
--- Needed to track the pinned warnings during and after compilation.
+-- | A mutable global variable used to track warnings during and after
+-- compilations.
 globalState :: MVar (M.Map ModuleFile WarningsWithModDate)
 globalState = unsafePerformIO $ newMVar mempty
 {-# NOINLINE globalState #-}
@@ -33,69 +33,62 @@ globalState = unsafePerformIO $ newMVar mempty
 plugin :: Ghc.Plugin
 plugin =
   Ghc.defaultPlugin
-    { Ghc.tcPlugin = const $ Just tcPlugin
+    { Ghc.tcPlugin           = const $ Just tcPlugin
     , Ghc.parsedResultAction = const resetPinnedWarnsForMod
-    , Ghc.dynflagsPlugin = const addWarningCapture
-    , Ghc.pluginRecompile = Ghc.purePlugin
+    , Ghc.dynflagsPlugin     = const (pure . addWarningCapture)
+    , Ghc.pluginRecompile    = Ghc.purePlugin
     }
 
 tcPlugin :: Ghc.TcPlugin
 tcPlugin =
   Ghc.TcPlugin
     { Ghc.tcPluginInit  = initTcPlugin
-    , Ghc.tcPluginSolve = \(sw, fw, counterRef) _ _ wanteds ->
-        checkWanteds sw fw counterRef wanteds
+    , Ghc.tcPluginSolve = \pluginState _ _ -> checkWanteds pluginState
     , Ghc.tcPluginStop  = const $ pure ()
     }
 
-initTcPlugin :: Ghc.TcPluginM (Ghc.TyCon, Ghc.TyCon, IORef Int)
+data PluginState =
+  MkPluginState
+    { showWarningsClass  :: Ghc.TyCon
+    , fixWarningsClass   :: Ghc.TyCon
+    , clearWarningsClass :: Ghc.TyCon
+    , counterRef         :: IORef Int
+    }
+
+initTcPlugin :: Ghc.TcPluginM PluginState
 initTcPlugin =
-  (,,) <$> lookupShowWarnings
-       <*> lookupFixWarnings
-       <*> Ghc.tcPluginIO (newIORef 0)
+  MkPluginState
+    <$> lookupClass "ShowWarnings"
+    <*> lookupClass "FixWarnings"
+    <*> lookupClass "ClearWarnings"
+    <*> Ghc.tcPluginIO (newIORef 0)
 
--- | Gets a reference to the 'ShowWarnings' constraint
-lookupShowWarnings :: Ghc.TcPluginM Ghc.TyCon
-lookupShowWarnings = do
+-- | Get a reference to a class from the @ShowWarnings@ module
+lookupClass :: String -> Ghc.TcPluginM Ghc.TyCon
+lookupClass className = do
   result <- Ghc.findImportedModule
               (Ghc.mkModuleName "ShowWarnings")
-              (Just  "pinned-warnings")
+              (Just "pinned-warnings")
 
   case result of
     Ghc.Found _ mod' -> do
-      name <- Ghc.lookupOrig mod' $ Ghc.mkTcOcc "ShowWarnings"
-      Ghc.classTyCon <$> Ghc.tcLookupClass name
-
-    _ -> error "ShowWarnings module not found"
-
--- | Gets a reference to the 'FixWarnings' constraint
-lookupFixWarnings :: Ghc.TcPluginM Ghc.TyCon
-lookupFixWarnings = do
-  result <- Ghc.findImportedModule
-              (Ghc.mkModuleName "ShowWarnings")
-              (Just  "pinned-warnings")
-
-  case result of
-    Ghc.Found _ mod' -> do
-      name <- Ghc.lookupOrig mod' $ Ghc.mkTcOcc "FixWarnings"
+      name <- Ghc.lookupOrig mod' $ Ghc.mkTcOcc className
       Ghc.classTyCon <$> Ghc.tcLookupClass name
 
     _ -> error "ShowWarnings module not found"
 
 -- | If any wanted constraints are for 'ShowWarnings', then inject the pinned
 -- warnings into GHC.
-checkWanteds :: Ghc.TyCon
-             -> Ghc.TyCon
-             -> IORef Int
+checkWanteds :: PluginState
              -> [Ghc.Ct]
              -> Ghc.TcPluginM Ghc.TcPluginResult
-checkWanteds sw fw counterRef
+checkWanteds pluginState
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
   where
     go ct@Ghc.CDictCan { Ghc.cc_class = cls }
-      | Ghc.classTyCon cls == sw = do
-          counter <- Ghc.tcPluginIO $ readIORef counterRef
+      | Ghc.classTyCon cls == showWarningsClass pluginState = do
+          counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
 
           -- for some reason warnings only appear if they are added on
           -- particular iterations.
@@ -104,10 +97,18 @@ checkWanteds sw fw counterRef
 
           pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
 
-      | Ghc.classTyCon cls == fw = do
-          counter <- Ghc.tcPluginIO $ readIORef counterRef
+      | Ghc.classTyCon cls == fixWarningsClass pluginState = do
+          counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
 
           when (counter == 0) (Ghc.tcPluginIO fixWarnings)
+          incrementCounter
+
+          pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
+
+      | Ghc.classTyCon cls == clearWarningsClass pluginState = do
+          counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
+
+          when (counter == 0) (Ghc.tcPluginIO clearWarnings)
           incrementCounter
 
           pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
@@ -115,7 +116,7 @@ checkWanteds sw fw counterRef
     go _ = pure Nothing
 
     incrementCounter =
-      Ghc.tcPluginIO $ modifyIORef' counterRef succ
+      Ghc.tcPluginIO $ modifyIORef' (counterRef pluginState) succ
 
 -- | Add warnings from the global state back into the GHC context
 addWarningsToContext :: Ghc.TcPluginM ()
@@ -159,9 +160,9 @@ resetPinnedWarnsForMod modSummary parsedModule = do
   pure parsedModule
 
 -- | Taps into the log action to capture the warnings that GHC emits.
-addWarningCapture :: Ghc.DynFlags -> IO Ghc.DynFlags
+addWarningCapture :: Ghc.DynFlags -> Ghc.DynFlags
 addWarningCapture dynFlags = do
-  pure dynFlags
+  dynFlags
     { Ghc.log_action = Ghc.log_action' (Ghc.log_action dynFlags) $
       \dyn severity srcSpan msgDoc -> do
         case (severity, Ghc.srcSpanFileName_maybe srcSpan) of
@@ -186,3 +187,7 @@ fixWarnings :: IO ()
 fixWarnings = do
   pruneDeleted
   modifyMVar_ globalState $ traverse FW.fixWarning
+
+clearWarnings :: IO ()
+clearWarnings =
+  void $ swapMVar globalState M.empty

@@ -4,6 +4,8 @@ module ShowWarnings
   , showWarnings
   , FixWarnings
   , fixWarnings
+  , ClearWarnings
+  , clearWarnings
   ) where
 
 class ShowWarnings where
@@ -13,3 +15,7 @@ class ShowWarnings where
 class FixWarnings where
   -- | Auto-fixes certain types of warnings
   fixWarnings :: ()
+
+class ClearWarnings where
+  -- | Removes any currently pinned warnings
+  clearWarnings :: ()
