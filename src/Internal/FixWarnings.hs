@@ -25,7 +25,10 @@ import           Internal.Types
 -- | Fixes applicable warning and returns 'False' if all warnings for the
 -- corresponding span should be removed.
 fixWarning :: WarningsWithModDate -> IO WarningsWithModDate
-fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
+fixWarning MkWarningsWithModDate
+             { lastUpdated = Alt (Just modifiedAt)
+             , warningsMap = MonoidMap warnMap
+             } = do
   -- State is used to keep the contents of a source file in memory while all
   -- applicable warnings for that file are fixed.
   (pairs, files) <- (`runStateT` M.empty)
@@ -77,7 +80,10 @@ fixWarning (Alt (Just modifiedAt), MonoidMap warnMap) = do
          )
          files
 
-  pure (Alt Nothing, MonoidMap $ M.fromList pairs)
+  pure MkWarningsWithModDate
+         { lastUpdated = Alt Nothing
+         , warningsMap = MonoidMap $ M.fromList pairs
+         }
 
 fixWarning w = pure w
 

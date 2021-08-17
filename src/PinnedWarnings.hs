@@ -125,7 +125,7 @@ addWarningsToContext = do
 
   Ghc.tcPluginIO pruneDeleted
   pinnedWarns <- Ghc.listToBag . map unWarning
-               . foldMap (foldMap S.toList . snd)
+               . foldMap (foldMap S.toList . warningsMap)
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
@@ -155,7 +155,11 @@ resetPinnedWarnsForMod modSummary parsedModule = do
 
   -- Replace any existing pinned warnings with new ones for this module
   liftIO . modifyMVar_ globalState
-    $ pure . M.insert modFile (modifiedTime, mempty)
+    $ pure . M.insert modFile
+        MkWarningsWithModDate
+          { lastUpdated = modifiedTime
+          , warningsMap = mempty
+          }
 
   pure parsedModule
 
@@ -178,7 +182,10 @@ addWarningCapture dynFlags = do
               modifyMVar_ globalState
                 $ pure
                 . M.insertWith (<>) modFile
-                    (mempty, MonoidMap warn)
+                    MkWarningsWithModDate
+                      { lastUpdated = mempty
+                      , warningsMap = MonoidMap warn
+                      }
 
           _ -> pure ()
     }

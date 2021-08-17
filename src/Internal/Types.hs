@@ -4,7 +4,7 @@ module Internal.Types
   , Warning(..)
   , MonoidMap(..)
   , SrcSpanKey
-  , WarningsWithModDate
+  , WarningsWithModDate(..)
   ) where
 
 import           Data.Monoid (Alt(..))
@@ -35,8 +35,13 @@ instance (Ord k, Semigroup a) => Monoid (MonoidMap k a) where
 
 type SrcSpanKey = (Ghc.RealSrcLoc, Ghc.RealSrcLoc) -- start and end of span
 
-type WarningsWithModDate =
-  ( Alt Maybe UTCTime -- Last time the module was modified
-  , MonoidMap SrcSpanKey (S.Set Warning)
-  )
+data WarningsWithModDate =
+  MkWarningsWithModDate
+    { lastUpdated :: !(Alt Maybe UTCTime) -- Last time the module was modified
+    , warningsMap :: !(MonoidMap SrcSpanKey (S.Set Warning))
+    }
 
+instance Semigroup WarningsWithModDate where
+  a <> b = MkWarningsWithModDate
+             (lastUpdated a <> lastUpdated b)
+             (warningsMap a <> warningsMap b)
