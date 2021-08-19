@@ -8,7 +8,6 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.IORef
 import           Data.List
-import           Data.Monoid (Alt(..))
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import qualified Data.Set as S
@@ -135,13 +134,15 @@ addWarningsToContext = do
 -- | Remove warnings for modules that no longer exist
 pruneDeleted :: IO ()
 pruneDeleted = modifyMVar_ globalState $ \warns -> do
-  let mods = M.keys warns
+  -- remove keys that have no warnings
+  let warns' = M.filter (not . null . warningsMap) warns
+      mods = M.keys warns'
 
   deletedMods <-
     filterM (fmap not . Dir.doesFileExist . Ghc.unpackFS)
             mods
 
-  pure $ foldl' (flip M.delete) warns deletedMods
+  pure $ foldl' (flip M.delete) warns' deletedMods
 
 -- | Removes currently pinned warnings for a module and updates the timestamp.
 -- This occurs before any new warnings are captured for the module.
@@ -151,15 +152,9 @@ resetPinnedWarnsForMod
   -> Ghc.Hsc Ghc.HsParsedModule
 resetPinnedWarnsForMod modSummary parsedModule = do
   let modFile = fromString $ Ghc.ms_hspp_file modSummary
-      modifiedTime = Alt . Just $ Ghc.ms_hs_date modSummary
 
-  -- Replace any existing pinned warnings with new ones for this module
   liftIO . modifyMVar_ globalState
-    $ pure . M.insert modFile
-        MkWarningsWithModDate
-          { lastUpdated = modifiedTime
-          , warningsMap = mempty
-          }
+    $ pure . M.delete modFile
 
   pure parsedModule
 
@@ -179,13 +174,17 @@ addWarningCapture dynFlags = do
                        . Warning
                        $ Ghc.mkWarnMsg dyn srcSpan Ghc.alwaysQualify msgDoc
 
-              modifyMVar_ globalState
-                $ pure
-                . M.insertWith (<>) modFile
-                    MkWarningsWithModDate
-                      { lastUpdated = mempty
-                      , warningsMap = MonoidMap warn
-                      }
+              let file = Ghc.unpackFS modFile
+              exists <- Dir.doesFileExist file
+              when exists $ do
+                fileModifiedAt <- Dir.getModificationTime file
+                modifyMVar_ globalState
+                  $ pure
+                  . M.insertWith (<>) modFile
+                      MkWarningsWithModDate
+                        { lastUpdated = fileModifiedAt
+                        , warningsMap = MonoidMap warn
+                        }
 
           _ -> pure ()
     }
@@ -193,7 +192,9 @@ addWarningCapture dynFlags = do
 fixWarnings :: IO ()
 fixWarnings = do
   pruneDeleted
-  modifyMVar_ globalState $ traverse FW.fixWarning
+
+  modifyMVar_ globalState $
+    M.traverseWithKey FW.fixWarning
 
 clearWarnings :: IO ()
 clearWarnings =

@@ -24,68 +24,60 @@ import           Internal.Types
 
 -- | Fixes applicable warning and returns 'False' if all warnings for the
 -- corresponding span should be removed.
-fixWarning :: WarningsWithModDate -> IO WarningsWithModDate
-fixWarning MkWarningsWithModDate
-             { lastUpdated = Alt (Just modifiedAt)
+fixWarning :: ModuleFile -> WarningsWithModDate -> IO WarningsWithModDate
+fixWarning modFile
+           warns@MkWarningsWithModDate
+             { lastUpdated = modifiedAt
              , warningsMap = MonoidMap warnMap
              } = do
-  -- State is used to keep the contents of a source file in memory while all
-  -- applicable warnings for that file are fixed.
-  (pairs, files) <- (`runStateT` M.empty)
-           . flip filterM (reverse $ M.toList warnMap) $ \case
-    ((start, _), warnSet)
-      | Alt (Just reWarn) -- Take the first redundancy warning parsed
-          <- foldMap (Alt . parseRedundancyWarn) warnSet
-      -> do
-        let file = Ghc.unpackFS $ Ghc.srcLocFile start
 
-        mCached <- gets (M.lookup file)
+  let file = Ghc.unpackFS modFile
+  lastModification <- liftIO $ Dir.getModificationTime file
 
-        -- Get the src lines from the cache or read it from the file
-        srcLines <-
-          maybe (liftIO . fmap BS.lines $ BS.readFile file)
-                pure
-                mCached
+  -- Do not attempt to edit if file has been touched since last reload
+  if lastModification /= modifiedAt
+  then do
+    putStrLn
+      $ "'" <> file
+      <> "' has been modified since last compiled. Reload and try again."
+    pure warns
 
-        fileModified <- liftIO $ Dir.getModificationTime file
-        if fileModified /= modifiedAt
-           then do
-             -- Do not attempt to edit if file has been touched since last reload
-             liftIO . putStrLn
-               $ "'" <> file
-               <> "' has been modified since last compiled. Reload and try again."
-             pure True
+  else do
+    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile file
 
-           -- attempt to fix the warning
-           else do
-             let startLine = Ghc.srcLocLine start
-                 mNewSrcLines =
-                   fixRedundancyWarning startLine reWarn srcLines
+    -- State is used to keep the contents of the source file in memory while
+    -- warnings for the file are fixed.
+    (pairs, newFileContents) <- (`runStateT` curSrcLines)
+             . flip filterM (reverse $ M.toList warnMap) $ \case
+      ((start, _), warnSet)
+        | Alt (Just reWarn) -- Take the first redundancy warning parsed
+            <- foldMap (Alt . parseRedundancyWarn) warnSet
+        -> do
+          srcLines <- get
 
-             case mNewSrcLines of
-               Nothing -> pure True
+          -- attempt to fix the warning
+          let startLine = Ghc.srcLocLine start
+              mNewSrcLines =
+                fixRedundancyWarning startLine reWarn srcLines
 
-               Just newSrcLines -> do
-                 modify' $ M.insert file newSrcLines
+          case mNewSrcLines of
+            Nothing -> pure True
 
-                 pure False
+            Just newSrcLines -> do
+              put newSrcLines
+              pure False
 
-    _ -> pure True
+      _ -> pure True
 
-  -- write the changes to the file
-  _ <- M.traverseWithKey
-         (\file ls -> do
-           BS.writeFile file $ BS.unlines ls
-           putStrLn $ "'" <> file <> "' has been edited"
-         )
-         files
+    when (length pairs /= length warnMap) $ do
+      -- write the changes to the file
+      BS.writeFile file $ BS.unlines newFileContents
+      putStrLn $ "'" <> file <> "' has been edited"
 
-  pure MkWarningsWithModDate
-         { lastUpdated = Alt Nothing
-         , warningsMap = MonoidMap $ M.fromList pairs
-         }
-
-fixWarning w = pure w
+    pure MkWarningsWithModDate
+           { lastUpdated = lastModification
+           , warningsMap = MonoidMap $ M.fromList pairs
+           }
 
 -- | Attempt to fix redundant import warning.
 -- Returns 'Nothing' if incapable of fixing.
