@@ -29,6 +29,9 @@ globalState = unsafePerformIO $ newMVar mempty
 -- Plugin
 --------------------------------------------------------------------------------
 
+-- dynFlagsPlugin is being removed in future GHC. There is instead a way to
+-- modify the HscEnv and there is a Logger type on HscEnv that should allow
+-- for hooking into messages.
 plugin :: Ghc.Plugin
 plugin =
   Ghc.defaultPlugin
