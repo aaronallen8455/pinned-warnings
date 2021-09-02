@@ -31,19 +31,18 @@ fixWarning modFile
              , warningsMap = MonoidMap warnMap
              } = do
 
-  let file = Ghc.unpackFS modFile
-  lastModification <- liftIO $ Dir.getModificationTime file
+  lastModification <- liftIO $ Dir.getModificationTime modFile
 
   -- Do not attempt to edit if file has been touched since last reload
   if lastModification /= modifiedAt
   then do
     putStrLn
-      $ "'" <> file
+      $ "'" <> modFile
       <> "' has been modified since last compiled. Reload and try again."
     pure warns
 
   else do
-    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile file
+    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile modFile
 
     -- State is used to keep the contents of the source file in memory while
     -- warnings for the file are fixed.
@@ -71,8 +70,8 @@ fixWarning modFile
 
     when (length pairs /= length warnMap) $ do
       -- write the changes to the file
-      BS.writeFile file $ BS.unlines newFileContents
-      putStrLn $ "'" <> file <> "' has been edited"
+      BS.writeFile modFile $ BS.unlines newFileContents
+      putStrLn $ "'" <> modFile <> "' has been edited"
 
     pure MkWarningsWithModDate
            { lastUpdated = lastModification

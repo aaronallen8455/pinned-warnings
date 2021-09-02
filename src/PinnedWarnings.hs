@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 module PinnedWarnings
   ( plugin
   ) where
@@ -37,7 +38,11 @@ plugin =
   Ghc.defaultPlugin
     { Ghc.tcPlugin           = const $ Just tcPlugin
     , Ghc.parsedResultAction = const resetPinnedWarnsForMod
+#if MIN_VERSION_ghc(9,2,0)
+    , Ghc.driverPlugin       = const (pure . addWarningCapture)
+#else
     , Ghc.dynflagsPlugin     = const (pure . addWarningCapture)
+#endif
     , Ghc.pluginRecompile    = Ghc.purePlugin
     }
 
@@ -131,8 +136,13 @@ addWarningsToContext = do
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
+#if MIN_VERSION_ghc(9,2,0)
+    $ \messages ->
+        (Ghc.mkMessages pinnedWarns `Ghc.unionMessages` messages, ())
+#else
     $ \(warnings, errors) ->
         ((Ghc.unionBags pinnedWarns warnings, errors), ())
+#endif
 
 -- | Remove warnings for modules that no longer exist
 pruneDeleted :: IO ()
@@ -142,7 +152,7 @@ pruneDeleted = modifyMVar_ globalState $ \warns -> do
       mods = M.keys warns'
 
   deletedMods <-
-    filterM (fmap not . Dir.doesFileExist . Ghc.unpackFS)
+    filterM (fmap not . Dir.doesFileExist)
             mods
 
   pure $ foldl' (flip M.delete) warns' deletedMods
@@ -162,35 +172,66 @@ resetPinnedWarnsForMod modSummary parsedModule = do
   pure parsedModule
 
 -- | Taps into the log action to capture the warnings that GHC emits.
+#if MIN_VERSION_ghc(9,2,0)
+addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
+addWarningCapture hscEnv =
+  hscEnv
+    { Ghc.hsc_logger = Ghc.pushLogHook warningsHook (Ghc.hsc_logger hscEnv)
+    }
+  where
+    warningsHook :: Ghc.LogAction -> Ghc.LogAction
+    warningsHook logAction dynFlags warnReason severity srcSpan sdoc = do
+      case severity of
+        Ghc.SevWarning
+          | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
+          , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
+          , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
+          -> do
+            let warn = Warning $ Ghc.mkPlainWarnMsg srcSpan sdoc
+            addWarningToGlobalState start end modFile warn
+        _ -> pure ()
+
+      logAction dynFlags warnReason severity srcSpan sdoc
+#else
 addWarningCapture :: Ghc.DynFlags -> Ghc.DynFlags
 addWarningCapture dynFlags = do
   dynFlags
     { Ghc.log_action = Ghc.log_action' (Ghc.log_action dynFlags) $
       \dyn severity srcSpan msgDoc -> do
         case (severity, Ghc.srcSpanFileName_maybe srcSpan) of
-          (Ghc.SevWarning, Just modFile)
+          Ghc.SevWarning
             | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
             , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
+            , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
             -> do
-              let warn = M.singleton (start, end)
-                       . S.singleton
-                       . Warning
+              let warn = Warning
                        $ Ghc.mkWarnMsg dyn srcSpan Ghc.alwaysQualify msgDoc
-
-              let file = Ghc.unpackFS modFile
-              exists <- Dir.doesFileExist file
-              when exists $ do
-                fileModifiedAt <- Dir.getModificationTime file
-                modifyMVar_ globalState
-                  $ pure
-                  . M.insertWith (<>) modFile
-                      MkWarningsWithModDate
-                        { lastUpdated = fileModifiedAt
-                        , warningsMap = MonoidMap warn
-                        }
-
+              addWarningToGlobalState start end modFile warn
           _ -> pure ()
     }
+#endif
+
+-- | Adds a warning to the global state variable
+addWarningToGlobalState
+  :: Ghc.RealSrcLoc -- ^ start location
+  -> Ghc.RealSrcLoc -- ^ end location
+  -> Ghc.FastString -- ^ module name
+  -> Warning
+  -> IO ()
+addWarningToGlobalState start end modFile warn = do
+  let wrappedWarn = M.singleton (start, end)
+                  $ S.singleton warn
+      file = Ghc.unpackFS modFile
+  exists <- Dir.doesFileExist file
+  when exists $ do
+    fileModifiedAt <- Dir.getModificationTime file
+    modifyMVar_ globalState
+      $ pure
+      . M.insertWith (<>) file
+          MkWarningsWithModDate
+            { lastUpdated = fileModifiedAt
+            , warningsMap = MonoidMap wrappedWarn
+            }
 
 fixWarnings :: IO ()
 fixWarnings = do
