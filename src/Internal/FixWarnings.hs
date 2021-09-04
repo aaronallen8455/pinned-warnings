@@ -31,19 +31,18 @@ fixWarning modFile
              , warningsMap = MonoidMap warnMap
              } = do
 
-  let file = Ghc.unpackFS modFile
-  lastModification <- liftIO $ Dir.getModificationTime file
+  lastModification <- liftIO $ Dir.getModificationTime modFile
 
   -- Do not attempt to edit if file has been touched since last reload
   if lastModification /= modifiedAt
   then do
     putStrLn
-      $ "'" <> file
+      $ "'" <> modFile
       <> "' has been modified since last compiled. Reload and try again."
     pure warns
 
   else do
-    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile file
+    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile modFile
 
     -- State is used to keep the contents of the source file in memory while
     -- warnings for the file are fixed.
@@ -71,8 +70,8 @@ fixWarning modFile
 
     when (length pairs /= length warnMap) $ do
       -- write the changes to the file
-      BS.writeFile file $ BS.unlines newFileContents
-      putStrLn $ "'" <> file <> "' has been edited"
+      BS.writeFile modFile $ BS.unlines newFileContents
+      putStrLn $ "'" <> modFile <> "' has been edited"
 
     pure MkWarningsWithModDate
            { lastUpdated = lastModification
@@ -85,26 +84,29 @@ fixRedundancyWarning :: Int
                      -> RedundancyWarn
                      -> [BS.ByteString]
                      -> Maybe [BS.ByteString]
-fixRedundancyWarning startLine warn srcLines =
+fixRedundancyWarning startLine warn srcLines = do
   -- The span for redundant errors is only ever a single line. This means we
   -- must search for the end of the import statement. If this a warning about a
   -- single import thing, the span line may not encompass the start of the
   -- import statement so we must search for that as well.
 
-  let (before, stmt : after) = splitAt (startLine - 1) srcLines
+  (before, stmt : after) <- Just $ splitAt (startLine - 1) srcLines
 
-      isStart bs = "import" `BS.isPrefixOf` BS.dropSpace bs
+  let isStart bs = "import" `BS.isPrefixOf` BS.dropSpace bs
 
-      (before', stmt')
-        | isStart stmt = (before, [stmt])
-        | otherwise =
-          let (inS, st : rs) = break isStart $ stmt : reverse before
-           in (reverse rs, st : reverse inS)
+  -- If the first line is not the start of the import declaration, search for
+  -- it in the preceding lines.
+  (before', stmt') <-
+    if isStart stmt
+       then Just (before, [stmt])
+       else do
+         (inS, st : rs) <- Just . break isStart $ stmt : reverse before
+         Just (reverse rs, st : reverse inS)
 
-      (stmt'', after') = splitAtImportEnd $ stmt' <> after
+  let (stmt'', after') = splitAtImportEnd $ stmt' <> after
 
       hasExplicitList
-        -- Check the next line to see if contains an explicit import list
+        -- Check the next line to see if it contains an explicit import list
         | a : _ <- after
         , BS.length (BS.takeWhile isSpace a)
             > BS.length (BS.takeWhile isSpace stmt)
@@ -112,17 +114,20 @@ fixRedundancyWarning startLine warn srcLines =
           = True
         | otherwise = isJust (BS.elemIndex '(' stmt)
 
-   in case warn of
-        WholeModule
-          | hasExplicitList -> Just $ before <> after'
-          | otherwise       -> Just $ before <> after
+  case warn of
+    WholeModule
+      | hasExplicitList -> Just $ before <> after'
+      | otherwise       -> Just $ before <> after
 
-        IndividualThings things ->
-          (<> after') . (before' <>) . BS.lines <$>
-            foldM fixRedundantThing
-                  (BS.unlines stmt'')
-                  things
+    IndividualThings things ->
+      (<> after') . (before' <>) . BS.lines <$>
+        foldM fixRedundantThing
+              (BS.unlines stmt'')
+              things
 
+-- | Splits at the end of an import with an explicit list by counting the
+-- number of opening and closing parens. If the main parens is closed, then
+-- that marks the end of the import.
 splitAtImportEnd :: [BS.ByteString] -> ([BS.ByteString], [BS.ByteString])
 splitAtImportEnd ls = first reverse $ go 0 0 ([], ls) where
   go o c acc
@@ -208,8 +213,8 @@ data RedundancyWarn
   deriving Show
 
 parseRedundancyWarn :: Warning -> Maybe RedundancyWarn
-parseRedundancyWarn (Warning warn) =
-  case P.readP_to_S redundancyWarnParser (show warn) of
+parseRedundancyWarn warn =
+  case P.readP_to_S redundancyWarnParser (showWarning warn) of
     [(w, "")] -> Just w
     _ -> Nothing
 
@@ -219,7 +224,7 @@ redundancyWarnParser = do
    <|> P.string "The qualified import of ‘"
 
   inQuotes <-
-    P.sepBy1 (P.munch1 $ \c -> not (isSpace c) && c /= ',' && c /= '’')
+    P.sepBy1 (P.munch1 $ \c -> not (isSpace c) && c `notElem` [',', '’'])
              (P.char ',' <* P.skipSpaces)
 
   _ <- P.char '’'

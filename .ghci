@@ -1,1 +1,1 @@
-:def sw (\_ -> pure ":m + ShowWarnings \nshowWarnings")
+:def sws (\_ -> pure ":set -fplugin=PinnedWarnings \n:m + ShowWarnings \nshowWarnings")

@@ -1,7 +1,9 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveFoldable #-}
 module Internal.Types
   ( ModuleFile
   , Warning(..)
+  , showWarning
   , MonoidMap(..)
   , SrcSpanKey
   , WarningsWithModDate(..)
@@ -13,9 +15,29 @@ import           Data.Time
 
 import qualified Internal.GhcFacade as Ghc
 
-type ModuleFile = Ghc.FastString
+type ModuleFile = String
 
-newtype Warning = Warning { unWarning :: Ghc.WarnMsg }
+newtype Warning = Warning
+  { unWarning
+#if MIN_VERSION_ghc(9,2,0)
+      :: Ghc.MsgEnvelope Ghc.DecoratedSDoc
+#else
+      :: Ghc.WarnMsg
+#endif
+  }
+
+showWarning :: Warning -> String
+showWarning =
+#if MIN_VERSION_ghc(9,2,0)
+  let sdocCtx = Ghc.defaultSDocContext
+              { Ghc.sdocPrintUnicodeSyntax = True
+              , Ghc.sdocCanUseUnicode = True
+              }
+   in foldMap (Ghc.showSDocOneLine sdocCtx)
+      . Ghc.unDecorated . Ghc.errMsgDiagnostic . unWarning
+#else
+  show . unWarning
+#endif
 
 instance Eq Warning where
   Warning a == Warning b = show a == show b
