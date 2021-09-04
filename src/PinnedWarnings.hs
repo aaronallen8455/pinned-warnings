@@ -198,7 +198,7 @@ addWarningCapture dynFlags = do
   dynFlags
     { Ghc.log_action = Ghc.log_action' (Ghc.log_action dynFlags) $
       \dyn severity srcSpan msgDoc -> do
-        case (severity, Ghc.srcSpanFileName_maybe srcSpan) of
+        case severity of
           Ghc.SevWarning
             | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
             , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan

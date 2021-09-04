@@ -4,7 +4,7 @@ module Internal.GhcFacade
   ( module X
   , pattern RealSrcLoc'
 #if MIN_VERSION_ghc(9,2,0)
-#elif
+#else
   , log_action'
 #endif
   ) where
@@ -27,6 +27,7 @@ import GHC.Types.Name.Occurrence as X
 import GHC.Types.SrcLoc as X
 import GHC.Utils.Error as X
 import GHC.Utils.Logger as X
+import GHC.Utils.Outputable as X
 
 #elif MIN_VERSION_ghc(9,0,0)
 import GHC as X
