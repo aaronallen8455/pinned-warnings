@@ -148,18 +148,8 @@ splitAtImportEnd ls = first reverse $ go 0 0 ([], ls) where
 -- - Semicolon layout
 fixRedundantThing :: BS.ByteString -> String -> Maybe BS.ByteString
 fixRedundantThing stmt thing
-  | (start, match) <- BS.breakSubstring thingBS stmt
-  , not (BS.null match)
-  , isSeparator $ BS.drop thingLen match
-  , isCellStart $ BS.reverse start
-
-  -- check that there isn't a second valid match
-  , (start2, match2) <- BS.breakSubstring thingBS (BS.drop thingLen match)
-  , BS.null match2
-      || not
-         ( isSeparator (BS.drop thingLen match2)
-        && isCellStart (BS.reverse start2)
-         )
+  -- Bail if there is more than one valid candidate
+  | [(start, match)] <- filter isValidCandidate $ findCandidates stmt
 
     -- preserve the whitespace immediately after the ',' or '('
   , let start' = let (s, e) = BS.breakEnd (`elem` [',', '(']) start
@@ -181,6 +171,23 @@ fixRedundantThing stmt thing
             | otherwise = bs
             where bs = BS.pack thing
     thingLen = BS.length thingBS
+
+    -- A list of substring matches where each element is a pair of the prefix
+    -- with the match and remaining suffix.
+    findCandidates "" = []
+    findCandidates inp =
+      let (pre, match) = BS.breakSubstring thingBS inp
+       in (pre, match) :
+            ( first ((pre <> thingBS) <>)
+            <$> findCandidates (BS.drop thingLen match)
+            )
+
+    -- Test if a match pair is valid by checking that the match is not a
+    -- substring of a different identifier
+    isValidCandidate (start, match) =
+      not (BS.null match)
+      && isSeparator (BS.drop thingLen match)
+      && isCellStart (BS.reverse start)
 
     isSeparator = headPred $ \c -> isSpace c || c `elem` [',', '(', ')']
     isCellStart = headPred $ \c -> isSpace c || c `elem` [',', '(']

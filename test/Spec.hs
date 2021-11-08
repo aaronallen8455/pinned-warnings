@@ -54,6 +54,9 @@ tests =
 
       fixRedundancyWarning 1 WholeModule input15
         @?= Just output15
+
+      fixRedundancyWarning 1 (IndividualThings ["zip", "zipWith"]) input16
+        @?= Just output16
   ]
 
 input1, output1 :: BS.ByteString
@@ -146,3 +149,8 @@ input15 = [ "import Foo"
           , "import Bar"
           ]
 output15 = [ "import Bar" ]
+
+-- first match is a subsubstring of another term
+input16, output16 :: [BS.ByteString]
+input16 = [ "import Data.List (zip4, zip, zipWith3, zipWith, zipWith2, zip3)" ]
+output16 = [ "import Data.List (zip4, zipWith3, zipWith2, zip3)" ]
