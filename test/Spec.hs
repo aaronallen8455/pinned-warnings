@@ -13,50 +13,65 @@ tests :: TestTree
 tests =
   testGroup "FixWarnings"
   [ testCase "Removes thing" $ do
-      fixRedundancyWarning 1 (IndividualThings ["foo"]) [input1]
-        @?= Just [output1]
+--       fixRedundancyWarning 1 (IndividualThings ["foo"]) [input1]
+--         @?= Just [output1]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["bar"]) [input2]
+--         @?= Just [output2]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["baz", "foo"]) [input3]
+--         @?= Just [output3]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["bar"]) [input4]
+--         @?= Just [output4]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["foo", "baz"]) input5
+--         @?= Just output5
+-- 
+--       fixRedundancyWarning 2 (IndividualThings ["bar"]) input6
+--         @?= Just output6
+-- 
+--       fixRedundancyWarning 3 (IndividualThings ["bar"]) input7
+--         @?= Just output7
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["Bar"]) [input8]
+--         @?= Just [output8]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["two"]) [input9]
+--         @?= Just [output9]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["+~"]) [input10]
+--         @?= Just [output10]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings [":~:"]) [input11]
+--         @?= Just [output11]
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["two"]) [input12]
+--         @?= Just [output12]
+-- 
+--       fixRedundancyWarning 1 WholeModule input13
+--         @?= Just output13
+-- 
+--       fixRedundancyWarning 1 WholeModule input14
+--         @?= Just output14
+-- 
+--       fixRedundancyWarning 1 WholeModule input15
+--         @?= Just output15
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["zip", "zipWith"]) input16
+--         @?= Just output16
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["Baz"]) input17
+--         @?= Just output17
+-- 
+--       fixRedundancyWarning 1 (IndividualThings ["+"]) input18
+--         @?= Just output18
+-- 
+--       fixRedundancyWarning 1 (IndividualThings [":+:"]) input19
+--         @?= Just output19
 
-      fixRedundancyWarning 1 (IndividualThings ["bar"]) [input2]
-        @?= Just [output2]
-
-      fixRedundancyWarning 1 (IndividualThings ["baz", "foo"]) [input3]
-        @?= Just [output3]
-
-      fixRedundancyWarning 1 (IndividualThings ["bar"]) [input4]
-        @?= Just [output4]
-
-      fixRedundancyWarning 1 (IndividualThings ["foo", "baz"]) input5
-        @?= Just output5
-
-      fixRedundancyWarning 2 (IndividualThings ["bar"]) input6
-        @?= Just output6
-
-      fixRedundancyWarning 3 (IndividualThings ["bar"]) input7
-        @?= Just output7
-
-      fixRedundancyWarning 1 (IndividualThings ["Bar"]) [input8]
-        @?= Just [output8]
-
-      fixRedundancyWarning 1 (IndividualThings ["two"]) [input9]
-        @?= Just [output9]
-
-      fixRedundancyWarning 1 (IndividualThings ["+~"]) [input10]
-        @?= Just [output10]
-
-      fixRedundancyWarning 1 (IndividualThings [":~:"]) [input11]
-        @?= Just [output11]
-
-      fixRedundancyWarning 1 WholeModule input13
-        @?= Just output13
-
-      fixRedundancyWarning 1 WholeModule input14
-        @?= Just output14
-
-      fixRedundancyWarning 1 WholeModule input15
-        @?= Just output15
-
-      fixRedundancyWarning 1 (IndividualThings ["zip", "zipWith"]) input16
-        @?= Just output16
+      fixRedundancyWarning 1 (IndividualThings ["Foo"]) input20
+        @?= Just output20
   ]
 
 input1, output1 :: BS.ByteString
@@ -154,3 +169,19 @@ output15 = [ "import Bar" ]
 input16, output16 :: [BS.ByteString]
 input16 = [ "import Data.List (zip4, zip, zipWith3, zipWith, zipWith2, zip3)" ]
 output16 = [ "import Data.List (zip4, zipWith3, zipWith2, zip3)" ]
+
+input17, output17 :: [BS.ByteString]
+input17 = [ "import Foo (Bar( Baz), foo)" ]
+output17 = [ "import Foo (Bar, foo)" ]
+
+input18, output18 :: [BS.ByteString]
+input18 = [ "import Foo (foo, ( +  ))" ]
+output18 = [ "import Foo (foo)" ]
+
+input19, output19 :: [BS.ByteString]
+input19 = [ "import Foo (foo, ( :+:  ) (.. ), bar)" ]
+output19 = [ "import Foo (foo, bar)" ]
+
+input20, output20 :: [BS.ByteString]
+input20 = [ "import Foo (foo, Foo (.. ))" ]
+output20 = [ "import Foo (foo)" ]

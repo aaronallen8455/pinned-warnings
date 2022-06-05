@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Internal.FixWarnings
@@ -22,8 +23,7 @@ import qualified Text.ParserCombinators.ReadP as P
 import qualified Internal.GhcFacade as Ghc
 import           Internal.Types
 
--- | Fixes applicable warning and returns 'False' if all warnings for the
--- corresponding span should be removed.
+-- | Fixes applicable warning
 fixWarning :: ModuleFile -> WarningsWithModDate -> IO WarningsWithModDate
 fixWarning modFile
            warns@MkWarningsWithModDate
@@ -151,23 +151,34 @@ fixRedundantThing stmt thing
   -- Bail if there is more than one valid candidate
   | [(start, match)] <- filter isValidCandidate $ findCandidates stmt
 
+    -- 1) remove the needle
+    -- 2) remove enclosing parens
+    -- 3) remove stuff to the right (..) etc.
+    -- 4) if there's a comma to the right, remove it as well
+
     -- preserve the whitespace immediately after the ',' or '('
   , let start' = let (s, e) = BS.breakEnd (`elem` [',', '(']) start
                   in s <> BS.takeWhile isSpace e
 
-        end = dropRest
-            . BS.dropSpace
-            $ BS.drop thingLen match
+        end = BS.drop thingLen match
+        (start'', end') = dropRest <$> removeEnclosingParens start' end
 
-  = BS.uncons end >>= \case
-      (',', end') -> Just $ start' <> BS.dropSpace end'
+  = BS.uncons end' >>= \case
+      -- Don't do this if the removed thing was an associated constructor
+      (',', end'')
+        | Just (_, e) <- BS.unsnoc $ BS.dropWhileEnd isSpace start''
+        , e `elem` [',', '('] -- Check if the target thing was not an associated constructor/method
+        -> Just $ start'' <> BS.dropSpace end''
+        | otherwise -> Just $ start'' <> end'
       -- If bound on the right by ')', remove the suffix containing ',' from start
-      (')', _) -> Just $ BS.init (BS.dropWhileEnd isSpace start') <> end
+      (')', _) -> Just $ BS.init startTrim <> end'
+        where
+          startTrim = BS.dropWhileEnd isSpace start''
       _ -> Nothing
 
   | otherwise = Nothing
   where
-    thingBS | isOperator bs = "(" <> bs <> ")"
+    thingBS | isOperator bs = bs -- TODO there could be spaces in the parens
             | otherwise = bs
             where bs = BS.pack thing
     thingLen = BS.length thingBS
@@ -176,9 +187,12 @@ fixRedundantThing stmt thing
     -- with the match and remaining suffix.
     findCandidates "" = []
     findCandidates inp =
-      let (pre, match) = BS.breakSubstring thingBS inp
-       in (pre, match) :
-            ( first ((pre <> thingBS) <>)
+    -- first isolate the portion that is within an open parens, otherwise
+    -- if the module name is the same as the target then the search will fail.
+      let (beforeParen, inp') = BS.break (== '(') inp
+          (pre, match) = BS.breakSubstring thingBS inp'
+       in (beforeParen <> pre, match) :
+            ( first ((beforeParen <> pre <> thingBS) <>)
             <$> findCandidates (BS.drop thingLen match)
             )
 
@@ -208,6 +222,14 @@ fixRedundantThing stmt thing
                                   $ BS.dropWhile (/= ')') r
 
                     _ -> BS.dropSpace bs
+
+    -- If dealing with an operator, there will be enclosing parens with possible
+    -- whitespace surrounding the operator.
+    removeEnclosingParens startBS (BS.dropSpace -> endBS)
+      | Just (')', end') <- BS.uncons endBS
+      , Just (start', '(') <- BS.unsnoc $ BS.dropWhileEnd isSpace startBS
+      = (start', BS.dropSpace end')
+      | otherwise = (startBS, endBS)
 
 --------------------------------------------------------------------------------
 -- Parsing

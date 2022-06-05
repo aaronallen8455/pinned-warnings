@@ -4,7 +4,7 @@ cabal-version:       2.4
 -- http://haskell.org/cabal/users-guide/
 
 name:                pinned-warnings
-version:             0.1.0.9
+version:             0.1.0.10
 synopsis: Preserve warnings in a GHCi session
 description: Please see the README on GitHub at <https://github.com/aaronallen8455/pinned-warnings#readme>
 homepage:       https://github.com/aaronallen8455/pinned-warnings#readme
@@ -19,7 +19,7 @@ category: Utility, Development
 extra-source-files:
   README.md
   CHANGELOG.md
-tested-with: GHC ==8.10.4 || ==8.10.5 || ==8.10.6 || ==8.10.7 || ==9.0.1 || ==9.2.1
+tested-with: GHC ==8.10.4 || ==8.10.5 || ==8.10.6 || ==8.10.7 || ==9.0.1 || ==9.2.2
 
 library
   exposed-modules:     PinnedWarnings
