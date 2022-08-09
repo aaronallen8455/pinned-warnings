@@ -44,6 +44,6 @@ session then evaluate `fixWarnings`.
 
 ### Known limitations
 - Warnings that aren't for a specific module are not captured.
-- Only the versions of GHC specified in the cabal file are supported (8.10, 9.0, 9.2)
+- GHC versions less than 8.10.x are not supported.
 - If you make changes to files and call `showWarnings` without reloading first,
   the messages may not be referencing the right code anymore.
