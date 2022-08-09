@@ -178,9 +178,7 @@ fixRedundantThing stmt thing
 
   | otherwise = Nothing
   where
-    thingBS | isOperator bs = bs -- TODO there could be spaces in the parens
-            | otherwise = bs
-            where bs = BS.pack thing
+    thingBS = BS.pack thing
     thingLen = BS.length thingBS
 
     -- A list of substring matches where each element is a pair of the prefix
@@ -189,7 +187,7 @@ fixRedundantThing stmt thing
     findCandidates inp =
     -- first isolate the portion that is within an open parens, otherwise
     -- if the module name is the same as the target then the search will fail.
-      let (beforeParen, inp') = BS.break (== '(') inp
+      let (beforeParen, inp') = BS.break (\c -> c == '(' || c == ',') inp
           (pre, match) = BS.breakSubstring thingBS inp'
        in (beforeParen <> pre, match) :
             ( first ((beforeParen <> pre <> thingBS) <>)
@@ -205,10 +203,6 @@ fixRedundantThing stmt thing
 
     isSeparator = headPred $ \c -> isSpace c || c `elem` [',', '(', ')']
     isCellStart = headPred $ \c -> isSpace c || c `elem` [',', '(']
-    isOperator = headPred (`elem` opChars)
-        where
-          opChars :: String
-          opChars = ":!#$%&*+./<=>?@\\^|-~"
     headPred :: (Char -> Bool) -> BS.ByteString -> Bool
     headPred p = maybe False (p . fst) . BS.uncons
 
@@ -228,7 +222,9 @@ fixRedundantThing stmt thing
     removeEnclosingParens startBS (BS.dropSpace -> endBS)
       | Just (')', end') <- BS.uncons endBS
       , Just (start', '(') <- BS.unsnoc $ BS.dropWhileEnd isSpace startBS
-      = (start', BS.dropSpace end')
+      -- recurse because it could be an associated constructor that is an operator,
+      -- i.e. NonEmpty((:|))
+      = removeEnclosingParens start' end'
       | otherwise = (startBS, endBS)
 
 --------------------------------------------------------------------------------
