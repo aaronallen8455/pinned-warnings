@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -161,9 +162,10 @@ fixRedundantThing stmt thing
                   in s <> BS.takeWhile isSpace e
 
         end = BS.drop thingLen match
-        (start'', end') = dropRest <$> removeEnclosingParens start' end
-
-  = BS.uncons end' >>= \case
+  = do
+    (start'', end') <- traverse removeAssociatedIds
+                     $ removeEnclosingParens start' end
+    BS.uncons end' >>= \case
       -- Don't do this if the removed thing was an associated constructor
       (',', end'')
         | Just (_, e) <- BS.unsnoc $ BS.dropWhileEnd isSpace start''
@@ -206,17 +208,6 @@ fixRedundantThing stmt thing
     headPred :: (Char -> Bool) -> BS.ByteString -> Bool
     headPred p = maybe False (p . fst) . BS.uncons
 
-    -- Remove the portion to the right of the match up to the cell terminator
-    dropRest bs = case BS.uncons bs of
-                    Nothing -> ""
-                    -- Constructors of a type or methods of a class
-                    Just (c, r)
-                      | c == '(' -> BS.dropWhile (\x -> x /= ',' && x /= ')')
-                                  . BS.drop 1
-                                  $ BS.dropWhile (/= ')') r
-
-                    _ -> BS.dropSpace bs
-
     -- If dealing with an operator, there will be enclosing parens with possible
     -- whitespace surrounding the operator.
     removeEnclosingParens startBS (BS.dropSpace -> endBS)
@@ -226,6 +217,31 @@ fixRedundantThing stmt thing
       -- i.e. NonEmpty((:|))
       = removeEnclosingParens start' end'
       | otherwise = (startBS, endBS)
+
+-- | Remove list of associated constructors of a type or methods of a class
+-- and any space up until the next cell terminator.
+removeAssociatedIds :: BS.ByteString -> Maybe BS.ByteString
+removeAssociatedIds = checkForParens
+  where
+    checkForParens bs =
+      let bs' = BS.dropSpace bs
+       in case BS.uncons bs' of
+            Nothing -> Just ""
+            Just (c, r)
+              | c == '(' -> removeParens 1 r
+            _ -> Just bs'
+
+    -- counts the depth of nested parens to handle the case of an operator
+    -- appearing in the list.
+    removeParens :: Int -> BS.ByteString -> Maybe BS.ByteString
+    removeParens 0 bs = Just $ BS.dropSpace bs
+    removeParens !n bs =
+      let bs' = BS.dropWhile (\x -> x /= '(' && x /= ')') bs
+       in case BS.uncons bs' of
+            Just (c, r)
+              | c == '(' -> removeParens (succ n) r
+              | c == ')' -> removeParens (pred n) r
+            _ -> Nothing
 
 --------------------------------------------------------------------------------
 -- Parsing

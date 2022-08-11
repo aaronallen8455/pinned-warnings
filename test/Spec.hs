@@ -40,6 +40,9 @@ tests =
       fixRedundancyWarning 1 (IndividualThings ["two"]) [input9]
         @?= Just [output9]
 
+      fixRedundancyWarning 1 (IndividualThings ["one"]) [input9]
+        @?= Just [output9a]
+
       fixRedundancyWarning 1 (IndividualThings ["+~"]) [input10]
         @?= Just [output10]
 
@@ -78,6 +81,12 @@ tests =
 
       fixRedundancyWarning 1 (IndividualThings ["zip"]) input22
         @?= Just output22
+
+      fixRedundancyWarning 1 (IndividualThings ["NonEmpty"]) input21
+        @?= Just output21a
+
+      fixRedundancyWarning 1 (IndividualThings [":|"]) input23
+        @?= Just output23
   ]
 
 input1, output1 :: BS.ByteString
@@ -137,6 +146,7 @@ output8 = "import Foo (foo, baz)"
 input9, output9 :: BS.ByteString
 input9  = "import Foo (foo, Bar(one, two), baz)"
 output9 = "import Foo (foo, Bar(one), baz)"
+output9a = "import Foo (foo, Bar(two), baz)"
 
 input10, output10 :: BS.ByteString
 input10  = "import Foo (foo, (+~), baz)"
@@ -195,7 +205,12 @@ output20 = [ "import Foo (foo)" ]
 input21, output21 :: [BS.ByteString]
 input21 = [ "import Data.List.NonEmpty (NonEmpty((:|)), foo)" ]
 output21 = [ "import Data.List.NonEmpty (NonEmpty, foo)" ]
+output21a = [ "import Data.List.NonEmpty (foo)" ]
 
 input22, output22 :: [BS.ByteString]
 input22 = [ "import Data.List (zipzip, zip)" ]
 output22 = [ "import Data.List (zipzip)" ]
+
+input23, output23 :: [BS.ByteString]
+input23 = [ "import Data.List.NonEmpty (NonEmpty((:|), bar), foo)" ]
+output23 = [ "import Data.List.NonEmpty (NonEmpty(bar), foo)" ]
