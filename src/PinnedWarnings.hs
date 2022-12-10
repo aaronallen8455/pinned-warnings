@@ -52,6 +52,9 @@ tcPlugin =
     { Ghc.tcPluginInit  = initTcPlugin
     , Ghc.tcPluginSolve = \pluginState _ _ -> checkWanteds pluginState
     , Ghc.tcPluginStop  = const $ pure ()
+#if MIN_VERSION_ghc(9,4,0)
+    , Ghc.tcPluginRewrite = mempty
+#endif
     }
 
 data PluginState =
@@ -75,7 +78,11 @@ lookupClass :: String -> Ghc.TcPluginM Ghc.TyCon
 lookupClass className = do
   result <- Ghc.findImportedModule
               (Ghc.mkModuleName "ShowWarnings")
+#if MIN_VERSION_ghc(9,4,0)
+              Ghc.NoPkgQual
+#else
               (Just "pinned-warnings")
+#endif
 
   case result of
     Ghc.Found _ mod' -> do
@@ -88,7 +95,7 @@ lookupClass className = do
 -- warnings into GHC.
 checkWanteds :: PluginState
              -> [Ghc.Ct]
-             -> Ghc.TcPluginM Ghc.TcPluginResult
+             -> Ghc.TcPluginM Ghc.TcPluginResult'
 checkWanteds pluginState
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
@@ -136,7 +143,11 @@ addWarningsToContext = do
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
-#if MIN_VERSION_ghc(9,2,0)
+#if MIN_VERSION_ghc(9,4,0)
+    $ \messages ->
+        (Ghc.mkMessages ((fmap . fmap) Ghc.TcRnUnknownMessage pinnedWarns)
+          `Ghc.unionMessages` messages, ())
+#elif MIN_VERSION_ghc(9,2,0)
     $ \messages ->
         (Ghc.mkMessages pinnedWarns `Ghc.unionMessages` messages, ())
 #else
@@ -161,8 +172,13 @@ pruneDeleted = modifyMVar_ globalState $ \warns -> do
 -- This occurs before any new warnings are captured for the module.
 resetPinnedWarnsForMod
   :: Ghc.ModSummary
+#if MIN_VERSION_ghc(9,4,0)
+  -> Ghc.ParsedResult
+  -> Ghc.Hsc Ghc.ParsedResult
+#else
   -> Ghc.HsParsedModule
   -> Ghc.Hsc Ghc.HsParsedModule
+#endif
 resetPinnedWarnsForMod modSummary parsedModule = do
   let modFile = fromString $ Ghc.ms_hspp_file modSummary
 
@@ -173,6 +189,36 @@ resetPinnedWarnsForMod modSummary parsedModule = do
 
 -- | Taps into the log action to capture the warnings that GHC emits.
 #if MIN_VERSION_ghc(9,2,0)
+addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
+addWarningCapture hscEnv =
+  hscEnv
+    { Ghc.hsc_logger = Ghc.pushLogHook warningsHook (Ghc.hsc_logger hscEnv)
+    }
+  where
+    warningsHook :: Ghc.LogAction -> Ghc.LogAction
+    warningsHook logAction dynFlags messageClass srcSpan sdoc = do
+      case messageClass of
+        Ghc.MCDiagnostic Ghc.SevWarning _
+          | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
+          , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
+          , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
+          -> do
+            let diag =
+                  Ghc.DiagnosticMessage
+                    { Ghc.diagMessage = Ghc.mkSimpleDecorated sdoc
+                    , Ghc.diagReason = Ghc.WarningWithoutFlag
+                    , Ghc.diagHints = []
+                    }
+                warn = Warning Ghc.MsgEnvelope
+                  { Ghc.errMsgSpan = srcSpan
+                  , Ghc.errMsgContext = Ghc.neverQualify
+                  , Ghc.errMsgDiagnostic = diag
+                  , Ghc.errMsgSeverity = Ghc.SevWarning
+                  }
+            addWarningToGlobalState start end modFile warn
+        _ -> pure ()
+      logAction dynFlags messageClass srcSpan sdoc
+#elif MIN_VERSION_ghc(9,2,0)
 addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
 addWarningCapture hscEnv =
   hscEnv

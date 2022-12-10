@@ -10,6 +10,7 @@ module Internal.Types
   ) where
 
 import qualified Data.Map.Strict as M
+import           Data.Ord (comparing)
 import qualified Data.Set as S
 import           Data.Time
 
@@ -19,7 +20,9 @@ type ModuleFile = String
 
 newtype Warning = Warning
   { unWarning
-#if MIN_VERSION_ghc(9,2,0)
+#if MIN_VERSION_ghc(9,4,0)
+      :: Ghc.MsgEnvelope Ghc.DiagnosticMessage
+#elif MIN_VERSION_ghc(9,2,0)
       :: Ghc.MsgEnvelope Ghc.DecoratedSDoc
 #else
       :: Ghc.WarnMsg
@@ -28,7 +31,15 @@ newtype Warning = Warning
 
 showWarning :: Warning -> String
 showWarning =
-#if MIN_VERSION_ghc(9,2,0)
+#if MIN_VERSION_ghc(9,4,0)
+  let sdocCtx = Ghc.defaultSDocContext
+              { Ghc.sdocPrintUnicodeSyntax = True
+              , Ghc.sdocCanUseUnicode = True
+              }
+   in foldMap (Ghc.showSDocOneLine sdocCtx)
+      . Ghc.unDecorated . Ghc.diagnosticMessage
+      . Ghc.errMsgDiagnostic . unWarning
+#elif MIN_VERSION_ghc(9,2,0)
   let sdocCtx = Ghc.defaultSDocContext
               { Ghc.sdocPrintUnicodeSyntax = True
               , Ghc.sdocCanUseUnicode = True
@@ -43,7 +54,7 @@ instance Eq Warning where
   Warning a == Warning b = show a == show b
 
 instance Ord Warning where
-  compare (Warning a) (Warning b) = compare (show a) (show b)
+  compare = comparing (show . unWarning)
 
 newtype MonoidMap k a = MonoidMap (M.Map k a)
   deriving Foldable

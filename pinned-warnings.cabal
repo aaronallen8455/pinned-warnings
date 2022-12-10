@@ -19,7 +19,7 @@ category: Utility, Development
 extra-source-files:
   README.md
   CHANGELOG.md
-tested-with: GHC ==8.10.4 || ==8.10.5 || ==8.10.6 || ==8.10.7 || ==9.0.1 || ==9.2.2
+tested-with: GHC ==8.10.4 || ==8.10.5 || ==8.10.6 || ==8.10.7 || ==9.0.1 || ==9.2.2 || ==9.4.2
 
 library
   exposed-modules:     PinnedWarnings
@@ -28,7 +28,7 @@ library
                        Internal.GhcFacade
                        Internal.Types
 
-  build-depends:       ghc              >= 8.10 && < 9.3,
+  build-depends:       ghc              >= 8.10 && < 9.5,
                        base             >= 4.14.1 && < 5,
                        bytestring       >= 0.10.12,
                        containers       >= 0.6.2,
