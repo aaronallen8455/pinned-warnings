@@ -188,7 +188,7 @@ resetPinnedWarnsForMod modSummary parsedModule = do
   pure parsedModule
 
 -- | Taps into the log action to capture the warnings that GHC emits.
-#if MIN_VERSION_ghc(9,2,0)
+#if MIN_VERSION_ghc(9,4,0)
 addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
 addWarningCapture hscEnv =
   hscEnv
