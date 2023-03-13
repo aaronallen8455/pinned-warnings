@@ -143,7 +143,11 @@ addWarningsToContext = do
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
-#if MIN_VERSION_ghc(9,4,0)
+#if MIN_VERSION_ghc(9,6,0)
+    $ \messages ->
+        (Ghc.mkMessages ((fmap . fmap) Ghc.mkTcRnUnknownMessage pinnedWarns)
+          `Ghc.unionMessages` messages, ())
+#elif MIN_VERSION_ghc(9,4,0)
     $ \messages ->
         (Ghc.mkMessages ((fmap . fmap) Ghc.TcRnUnknownMessage pinnedWarns)
           `Ghc.unionMessages` messages, ())
@@ -198,7 +202,11 @@ addWarningCapture hscEnv =
     warningsHook :: Ghc.LogAction -> Ghc.LogAction
     warningsHook logAction dynFlags messageClass srcSpan sdoc = do
       case messageClass of
+#if MIN_VERSION_ghc(9,6,0)
+        Ghc.MCDiagnostic Ghc.SevWarning _ _
+#else
         Ghc.MCDiagnostic Ghc.SevWarning _
+#endif
           | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
           , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
           , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
