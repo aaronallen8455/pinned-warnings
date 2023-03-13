@@ -37,7 +37,12 @@ showWarning =
               , Ghc.sdocCanUseUnicode = True
               }
    in foldMap (Ghc.showSDocOneLine sdocCtx)
-      . Ghc.unDecorated . Ghc.diagnosticMessage
+      . Ghc.unDecorated
+#if MIN_VERSION_ghc(9,6,0)
+      . Ghc.diagnosticMessage Ghc.NoDiagnosticOpts
+#else
+      . Ghc.diagnosticMessage
+#endif
       . Ghc.errMsgDiagnostic . unWarning
 #elif MIN_VERSION_ghc(9,2,0)
   let sdocCtx = Ghc.defaultSDocContext
