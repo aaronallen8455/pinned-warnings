@@ -173,7 +173,7 @@ fixRedundantThing stmt thing
         -> Just $ start'' <> BS.dropSpace end''
         | otherwise -> Just $ start'' <> end'
       -- If bound on the right by ')', remove the suffix containing ',' from start
-      (')', _) -> Just $ BS.init startTrim <> end'
+      (')', _) -> Just $ BS.dropWhileEnd (== ',') startTrim <> end'
         where
           startTrim = BS.dropWhileEnd isSpace start''
       _ -> Nothing

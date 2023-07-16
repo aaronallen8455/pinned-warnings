@@ -87,6 +87,9 @@ tests =
 
       fixRedundancyWarning 1 (IndividualThings [":|"]) input23
         @?= Just output23
+
+      fixRedundancyWarning 1 (IndividualThings ["foo"]) input24
+        @?= Just output24
   ]
 
 input1, output1 :: BS.ByteString
@@ -214,3 +217,7 @@ output22 = [ "import Data.List (zipzip)" ]
 input23, output23 :: [BS.ByteString]
 input23 = [ "import Data.List.NonEmpty (NonEmpty((:|), bar), foo)" ]
 output23 = [ "import Data.List.NonEmpty (NonEmpty(bar), foo)" ]
+
+input24, output24 :: [BS.ByteString]
+input24 = [ "import Foo (Foo(foo))" ]
+output24 = [ "import Foo (Foo)" ]
