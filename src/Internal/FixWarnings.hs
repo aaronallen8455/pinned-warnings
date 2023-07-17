@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -12,12 +11,14 @@ import           Control.Applicative ((<|>))
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.Trans.State
-import           Data.Bifunctor (first)
-import qualified Data.ByteString.Char8 as BS
 import           Data.Char (isSpace)
-import           Data.Maybe (isJust)
+import qualified Data.List as List
+import           Data.Maybe
 import           Data.Monoid (Alt(..))
 import qualified Data.Map.Strict as M
+import qualified GHC.Paths as Paths
+import qualified Language.Haskell.GHC.ExactPrint as EP
+import qualified Language.Haskell.Syntax as Syn
 import qualified System.Directory as Dir
 import qualified Text.ParserCombinators.ReadP as P
 
@@ -43,214 +44,131 @@ fixWarning modFile
     pure warns
 
   else do
-    curSrcLines <- liftIO . fmap BS.lines $ BS.readFile modFile
+    parseResult <- EP.parseModule Paths.libdir modFile
 
-    -- State is used to keep the contents of the source file in memory while
-    -- warnings for the file are fixed.
-    (pairs, newFileContents) <- (`runStateT` curSrcLines)
-             . flip filterM (reverse $ M.toList warnMap) $ \case
-      ((start, _), warnSet)
-        | Alt (Just reWarn) -- Take the first redundancy warning parsed
-            <- foldMap (Alt . parseRedundancyWarn) warnSet
-        -> do
-          srcLines <- get
+    case parseResult of
+      Left _ -> do
+        putStrLn $ "Failed to parse module: " <> modFile
+        pure warns
+      Right (EP.makeDeltaAst ->
+              Ghc.L modLoc hsMod@Syn.HsModule{Syn.hsmodImports = imports}) -> do
 
-          -- attempt to fix the warning
-          let startLine = Ghc.srcLocLine start
-              mNewSrcLines =
-                fixRedundancyWarning startLine reWarn srcLines
+        -- State is used to keep the contents of the source file in memory while
+        -- warnings for the file are fixed.
+        (pairs, newImports) <- (`runStateT` imports)
+                   -- filter out the warnings that were corrected
+                 . flip filterM (reverse $ M.toList warnMap) $ \case
+          -- TODO don't need src loc data anymore
+          ((_, _), warnSet)
+            | Alt (Just reWarn) -- Take the first redundancy warning parsed
+                <- foldMap (Alt . parseRedundancyWarn) warnSet
+            -> do
+              importDecls <- get
+              case fixRedundancyWarning reWarn importDecls of
+                Nothing -> pure True
+                Just newImportDecls -> do
+                  put newImportDecls
+                  pure False
 
-          case mNewSrcLines of
-            Nothing -> pure True
+          _ -> pure True
 
-            Just newSrcLines -> do
-              put newSrcLines
-              pure False
+        when (length pairs /= length warnMap) $ do
+          -- write the changes to the file
+          writeFile modFile $
+            EP.exactPrint (Ghc.L modLoc hsMod { Syn.hsmodImports = newImports })
+          putStrLn $ "'" <> modFile <> "' has been edited"
 
-      _ -> pure True
-
-    when (length pairs /= length warnMap) $ do
-      -- write the changes to the file
-      BS.writeFile modFile $ BS.unlines newFileContents
-      putStrLn $ "'" <> modFile <> "' has been edited"
-
-    pure MkWarningsWithModDate
-           { lastUpdated = lastModification
-           , warningsMap = MonoidMap $ M.fromList pairs
-           }
+        pure MkWarningsWithModDate
+               { lastUpdated = lastModification
+               , warningsMap = MonoidMap $ M.fromList pairs
+               }
 
 -- | Attempt to fix redundant import warning.
 -- Returns 'Nothing' if incapable of fixing.
-fixRedundancyWarning :: Int
-                     -> RedundancyWarn
-                     -> [BS.ByteString]
-                     -> Maybe [BS.ByteString]
-fixRedundancyWarning startLine warn srcLines = do
-  -- The span for redundant errors is only ever a single line. This means we
-  -- must search for the end of the import statement. If this a warning about a
-  -- single import thing, the span line may not encompass the start of the
-  -- import statement so we must search for that as well.
+fixRedundancyWarning :: RedundancyWarn
+                     -> [Syn.LImportDecl Ghc.GhcPs]
+                     -> Maybe [Syn.LImportDecl Ghc.GhcPs]
+fixRedundancyWarning (WholeModule modName) imports =
+  case List.partition (matchModule modName) imports of
+    (_:_, rest) -> Just rest
+    _ -> Nothing
+fixRedundancyWarning (IndividualThings things modName) imports = do
+  (before, Ghc.L impLoc matchedImp : after)
+    <- Just $ break (matchModule modName) imports
+  (Syn.Exactly, Ghc.L ieLoc lies) <- Syn.ideclImportList matchedImp
 
-  (before, stmt : after) <- Just $ splitAt (startLine - 1) srcLines
+  let importResults = removeRedundantThings things <$> lies
 
-  let isStart bs = "import" `BS.isPrefixOf` BS.dropSpace bs
+  -- Fail if there is not a single import that was modified or removed
+  guard $ (== 1) . length $ filter isEffected importResults
+  let newLies = mapMaybe unwrapResult importResults
+  Just $ before
+      ++ Ghc.L impLoc matchedImp
+           { Syn.ideclImportList = Just (Syn.Exactly, Ghc.L ieLoc newLies) }
+       : after
 
-  -- If the first line is not the start of the import declaration, search for
-  -- it in the preceding lines.
-  (before', stmt') <-
-    if isStart stmt
-       then Just (before, [stmt])
-       else do
-         (inS, st : rs) <- Just . break isStart $ stmt : reverse before
-         Just (reverse rs, st : reverse inS)
+matchModule :: String -> Syn.LImportDecl Ghc.GhcPs -> Bool
+matchModule modName
+  = (== modName) . Syn.moduleNameString
+  . Ghc.unLoc . Syn.ideclName . Ghc.unLoc
 
-  let (stmt'', after') = splitAtImportEnd $ stmt' <> after
+data ImportResult
+  = NoOp (Syn.LIE Ghc.GhcPs)
+  | Effected (Maybe (Syn.LIE Ghc.GhcPs))
+  | Ambiguous
 
-      hasExplicitList
-        -- Check the next line to see if it contains an explicit import list
-        | a : _ <- after
-        , BS.length (BS.takeWhile isSpace a)
-            > BS.length (BS.takeWhile isSpace stmt)
-        , BS.take 1 (BS.dropSpace a) == "("
-          = True
-        | otherwise = isJust (BS.elemIndex '(' stmt)
+isEffected :: ImportResult -> Bool
+isEffected Effected{} = True
+isEffected Ambiguous = True
+isEffected NoOp{} = False
 
-  case warn of
-    WholeModule
-      | hasExplicitList -> Just $ before <> after'
-      | otherwise       -> Just $ before <> after
+unwrapResult :: ImportResult -> Maybe (Syn.LIE Ghc.GhcPs)
+unwrapResult = \case
+  NoOp i -> Just i
+  Effected i -> i
+  Ambiguous -> Nothing
 
-    IndividualThings things ->
-      (<> after') . (before' <>) . BS.lines <$>
-        foldM fixRedundantThing
-              (BS.unlines stmt'')
-              things
-
--- | Splits at the end of an import with an explicit list by counting the
--- number of opening and closing parens. If the main parens is closed, then
--- that marks the end of the import.
-splitAtImportEnd :: [BS.ByteString] -> ([BS.ByteString], [BS.ByteString])
-splitAtImportEnd ls = first reverse $ go 0 0 ([], ls) where
-  go o c acc
-    | o /= 0 , o == c
-    = acc
-  go _ _ acc@(_, []) = acc -- shouldn't happen
-  go o c (stmt, r:rest) =
-    let addO = length $ BS.elemIndices '(' r
-        addC = length $ BS.elemIndices ')' r
-     in go (o + addO) (c + addC) (r : stmt, rest)
-
--- | Removes a particular thing from an import list without disrupting the
--- formatting. Returns 'Nothing' if the thing doesn't exist or appears more
--- than once.
---
--- Edges cases not handled:
--- - Comments interspersed in the statement that mention the thing
--- - Semicolon layout
-fixRedundantThing :: BS.ByteString -> String -> Maybe BS.ByteString
-fixRedundantThing stmt thing
-  -- Bail if there is more than one valid candidate
-  | [(start, match)] <- filter isValidCandidate $ findCandidates stmt
-
-    -- 1) remove the needle
-    -- 2) remove enclosing parens
-    -- 3) remove stuff to the right (..) etc.
-    -- 4) if there's a comma to the right, remove it as well
-
-    -- preserve the whitespace immediately after the ',' or '('
-  , let start' = let (s, e) = BS.breakEnd (`elem` [',', '(']) start
-                  in s <> BS.takeWhile isSpace e
-
-        end = BS.drop thingLen match
-  = do
-    (start'', end') <- traverse removeAssociatedIds
-                     $ removeEnclosingParens start' end
-    BS.uncons end' >>= \case
-      -- Don't do this if the removed thing was an associated constructor
-      (',', end'')
-        | Just (_, e) <- BS.unsnoc $ BS.dropWhileEnd isSpace start''
-        , e `elem` [',', '('] -- Check if the target thing was not an associated constructor/method
-        -> Just $ start'' <> BS.dropSpace end''
-        | otherwise -> Just $ start'' <> end'
-      -- If bound on the right by ')', remove the suffix containing ',' from start
-      (')', _) -> Just $ BS.dropWhileEnd (== ',') startTrim <> end'
-        where
-          startTrim = BS.dropWhileEnd isSpace start''
-      _ -> Nothing
-
-  | otherwise = Nothing
-  where
-    thingBS = BS.pack thing
-    thingLen = BS.length thingBS
-
-    -- A list of substring matches where each element is a pair of the prefix
-    -- with the match and remaining suffix.
-    findCandidates "" = []
-    findCandidates inp =
-    -- first isolate the portion that is within an open parens, otherwise
-    -- if the module name is the same as the target then the search will fail.
-      let (beforeParen, inp') = BS.break (\c -> c == '(' || c == ',') inp
-          (pre, match) = BS.breakSubstring thingBS inp'
-       in (beforeParen <> pre, match) :
-            ( first ((beforeParen <> pre <> thingBS) <>)
-            <$> findCandidates (BS.drop thingLen match)
-            )
-
-    -- Test if a match pair is valid by checking that the match is not a
-    -- substring of a different identifier
-    isValidCandidate (start, match) =
-      not (BS.null match)
-      && isSeparator (BS.drop thingLen match)
-      && isCellStart (BS.reverse start)
-
-    isSeparator = headPred $ \c -> isSpace c || c `elem` [',', '(', ')']
-    isCellStart = headPred $ \c -> isSpace c || c `elem` [',', '(']
-    headPred :: (Char -> Bool) -> BS.ByteString -> Bool
-    headPred p = maybe False (p . fst) . BS.uncons
-
-    -- If dealing with an operator, there will be enclosing parens with possible
-    -- whitespace surrounding the operator.
-    removeEnclosingParens startBS (BS.dropSpace -> endBS)
-      | Just (')', end') <- BS.uncons endBS
-      , Just (start', '(') <- BS.unsnoc $ BS.dropWhileEnd isSpace startBS
-      -- recurse because it could be an associated constructor that is an operator,
-      -- i.e. NonEmpty((:|))
-      = removeEnclosingParens start' end'
-      | otherwise = (startBS, endBS)
-
--- | Remove list of associated constructors of a type or methods of a class
--- and any space up until the next cell terminator.
-removeAssociatedIds :: BS.ByteString -> Maybe BS.ByteString
-removeAssociatedIds = checkForParens
-  where
-    checkForParens bs =
-      let bs' = BS.dropSpace bs
-       in case BS.uncons bs' of
-            Nothing -> Just ""
-            Just (c, r)
-              | c == '(' -> removeParens 1 r
-            _ -> Just bs'
-
-    -- counts the depth of nested parens to handle the case of an operator
-    -- appearing in the list.
-    removeParens :: Int -> BS.ByteString -> Maybe BS.ByteString
-    removeParens 0 bs = Just $ BS.dropSpace bs
-    removeParens !n bs =
-      let bs' = BS.dropWhile (\x -> x /= '(' && x /= ')') bs
-       in case BS.uncons bs' of
-            Just (c, r)
-              | c == '(' -> removeParens (succ n) r
-              | c == ')' -> removeParens (pred n) r
-            _ -> Nothing
+removeRedundantThings :: [String] -> Syn.LIE Ghc.GhcPs -> ImportResult
+removeRedundantThings things lie@(Ghc.L ieLoc ie) =
+  let nameMatches = case ie of
+        Syn.IEVar _ (Ghc.L _ (Ghc.occName -> occN)) ->
+          Ghc.occNameString occN `elem` things
+        Syn.IEThingAbs _ (Ghc.L _ (Ghc.occName -> occN)) ->
+          Ghc.occNameString occN `elem` things
+        Syn.IEThingAll _ (Ghc.L _ (Ghc.occName -> occN)) ->
+          Ghc.occNameString occN `elem` things
+        Syn.IEThingWith _ (Ghc.L _ (Ghc.occName -> occN)) _ _ ->
+          Ghc.occNameString occN `elem` things
+        Syn.IEModuleContents{} -> False
+        Syn.IEGroup{} -> False
+        Syn.IEDoc{} -> False
+        Syn.IEDocNamed{} -> False
+      matchedAssocThing = case ie of
+        Syn.IEThingWith x n w assocWrappedNames -> do -- Maybe
+          let assocNameMatches = (`elem` things) . Ghc.occNameString
+                               . Ghc.occName . Ghc.unLoc
+          (before, _ : rest) <- Just $ break assocNameMatches assocWrappedNames
+          Just $ Syn.IEThingWith x n w (before ++ rest)
+        _ -> Nothing
+   in case (nameMatches, matchedAssocThing) of
+        (True, Just _) -> Ambiguous
+        (True, _) -> Effected Nothing
+        (_, Just newIE) -> Effected $ Just (Ghc.L ieLoc newIE)
+        (False, Nothing) -> NoOp lie
 
 --------------------------------------------------------------------------------
 -- Parsing
 --------------------------------------------------------------------------------
 
+-- TODO use structured diagnostics instead of parsing error messages
+
 -- | Redundant import warnings
 data RedundancyWarn
   = WholeModule
-  | IndividualThings [String]
+      String -- ^ module name
+  | IndividualThings
+      [String] -- ^ redundant things
+      String -- ^ module name
   deriving Show
 
 parseRedundancyWarn :: Warning -> Maybe RedundancyWarn
@@ -264,7 +182,7 @@ redundancyWarnParser = do
   _ <- P.string "The import of ‘"
    <|> P.string "The qualified import of ‘"
 
-  inQuotes <-
+  inQuotes@(firstThing : _) <-
     P.sepBy1 (P.munch1 $ \c -> not (isSpace c) && c `notElem` [',', '’'])
              (P.char ',' <* P.skipSpaces)
 
@@ -272,13 +190,13 @@ redundancyWarnParser = do
 
   let terms
         = IndividualThings inQuotes
-         <$ ( P.skipSpaces
-           *> P.string "from module ‘"
-           *> P.munch1 (/= '’')
-           *> P.string "’ is redundant"
-            )
+         <$> ( P.skipSpaces
+            *> P.string "from module ‘"
+            *> P.munch1 (/= '’')
+            <* P.string "’ is redundant"
+             )
 
-      wholeMod = WholeModule
+      wholeMod = WholeModule firstThing
               <$ (P.skipSpaces *> P.string "is redundant")
 
   result <- P.choice [terms, wholeMod]

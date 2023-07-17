@@ -90,6 +90,9 @@ tests =
 
       fixRedundancyWarning 1 (IndividualThings ["foo"]) input24
         @?= Just output24
+
+      fixRedundancyWarning 1 (IndividualThings ["foo"]) input25
+        @?= Just output25
   ]
 
 input1, output1 :: BS.ByteString
@@ -221,3 +224,7 @@ output23 = [ "import Data.List.NonEmpty (NonEmpty(bar), foo)" ]
 input24, output24 :: [BS.ByteString]
 input24 = [ "import Foo (Foo(foo))" ]
 output24 = [ "import Foo (Foo)" ]
+
+input25, output25 :: [BS.ByteString]
+input25 = [ "import Foo (Foo(foo), bar)" ]
+output25 = [ "import Foo (Foo, bar)" ]
