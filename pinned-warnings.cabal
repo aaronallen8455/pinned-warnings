@@ -50,5 +50,8 @@ test-suite pinned-warnings-test
                  pinned-warnings,
                  tasty,
                  tasty-hunit,
-                 bytestring
+                 bytestring,
+                 ghc-exactprint,
+                 ghc-paths,
+                 ghc
   default-language: Haskell2010

@@ -1,6 +1,12 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS
+import qualified GHC.Paths as Paths
+import qualified GHC.Types.SrcLoc as Ghc
+import qualified Language.Haskell.GHC.ExactPrint as EP
+import qualified Language.Haskell.GHC.ExactPrint.Parsers as EP
+import qualified Language.Haskell.Syntax as Syn
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
@@ -13,218 +19,236 @@ tests :: TestTree
 tests =
   testGroup "FixWarnings"
   [ testCase "Removes thing" $ do
-      fixRedundancyWarning 1 (IndividualThings ["foo"]) [input1]
-        @?= Just [output1]
+      doTest input1 (IndividualThings ["foo"] "Foo.Bar") output1
 
-      fixRedundancyWarning 1 (IndividualThings ["bar"]) [input2]
-        @?= Just [output2]
+      doTest input2 (IndividualThings ["bar"] "Foo.Bar") output2
 
-      fixRedundancyWarning 1 (IndividualThings ["baz", "foo"]) [input3]
-        @?= Just [output3]
+      doTest input3 (IndividualThings ["baz", "foo"] "Foo.Bar") output3
 
-      fixRedundancyWarning 1 (IndividualThings ["bar"]) [input4]
-        @?= Just [output4]
+      doTest input4 (IndividualThings ["bar"] "Foo.Bar") output4
 
-      fixRedundancyWarning 1 (IndividualThings ["foo", "baz"]) input5
-        @?= Just output5
+      doTest input5 (IndividualThings ["foo", "baz"] "Foo.Bar") output5
 
-      fixRedundancyWarning 2 (IndividualThings ["bar"]) input6
-        @?= Just output6
+      doTest input6 (IndividualThings ["bar"] "Foo.Bar") output6
 
-      fixRedundancyWarning 3 (IndividualThings ["bar"]) input7
-        @?= Just output7
+      doTest input7 (IndividualThings ["Bar"] "Foo.Bar") output7
 
-      fixRedundancyWarning 1 (IndividualThings ["Bar"]) [input8]
-        @?= Just [output8]
+      doTest input8 (IndividualThings ["Bar"] "Foo") output8
 
-      fixRedundancyWarning 1 (IndividualThings ["two"]) [input9]
-        @?= Just [output9]
+      doTest input9 (IndividualThings ["two"] "Foo") output9
 
-      fixRedundancyWarning 1 (IndividualThings ["one"]) [input9]
-        @?= Just [output9a]
+      doTest input9 (IndividualThings ["one"] "Foo") output9a
 
-      fixRedundancyWarning 1 (IndividualThings ["+~"]) [input10]
-        @?= Just [output10]
+      doTest input10 (IndividualThings ["+~"] "Foo") output10
 
-      fixRedundancyWarning 1 (IndividualThings [":~:"]) [input11]
-        @?= Just [output11]
+      doTest input11 (IndividualThings [":~:"] "Foo") output11
 
-      fixRedundancyWarning 1 (IndividualThings ["two"]) [input12]
-        @?= Just [output12]
+      doTest input12 (IndividualThings ["two"] "Foo") output12
 
-      fixRedundancyWarning 1 WholeModule input13
-        @?= Just output13
+      doTest input12 (IndividualThings ["one"] "Foo") output12a
 
-      fixRedundancyWarning 1 WholeModule input14
-        @?= Just output14
+      doTest input13 (WholeModule "Foo") output13
 
-      fixRedundancyWarning 1 WholeModule input15
-        @?= Just output15
+      doTest input14 (WholeModule "Foo") output14
 
-      fixRedundancyWarning 1 (IndividualThings ["zip", "zipWith"]) input16
-        @?= Just output16
+      doTest input15 (WholeModule "Foo") output15
 
-      fixRedundancyWarning 1 (IndividualThings ["Baz"]) input17
-        @?= Just output17
+      doTest input16 (IndividualThings ["zip", "zipWith"] "Data.List") output16
 
-      fixRedundancyWarning 1 (IndividualThings ["+"]) input18
-        @?= Just output18
+      doTest input17 (IndividualThings ["Baz"] "Foo") output17
 
-      fixRedundancyWarning 1 (IndividualThings [":+:"]) input19
-        @?= Just output19
+      doTest input18 (IndividualThings ["+"] "Foo") output18
 
-      fixRedundancyWarning 1 (IndividualThings ["Foo"]) input20
-        @?= Just output20
+      doTest input19 (IndividualThings [":+:"] "Foo") output19
 
-      fixRedundancyWarning 1 (IndividualThings [":|"]) input21
-        @?= Just output21
+      doTest input20 (IndividualThings ["Foo"] "Foo") output20
 
-      fixRedundancyWarning 1 (IndividualThings ["zip"]) input22
-        @?= Just output22
+      doTest input21 (IndividualThings [":|"] "Data.List.NonEmpty") output21
 
-      fixRedundancyWarning 1 (IndividualThings ["NonEmpty"]) input21
-        @?= Just output21a
+      doTest input22 (IndividualThings ["zip"] "Data.List") output22
 
-      fixRedundancyWarning 1 (IndividualThings [":|"]) input23
-        @?= Just output23
+      doTest input21 (IndividualThings ["NonEmpty"] "Data.List.NonEmpty") output21a
 
-      fixRedundancyWarning 1 (IndividualThings ["foo"]) input24
-        @?= Just output24
+      doTest input23 (IndividualThings [":|"] "Data.List.NonEmpty") output23
 
-      fixRedundancyWarning 1 (IndividualThings ["foo"]) input25
-        @?= Just output25
+      doTest input24 (IndividualThings ["foo"] "Foo") output24
+
+      doTest input25 (IndividualThings ["foo"] "Foo") output25
+
+      doTest input26 (IndividualThings ["Foo"] "Foo") output26
+
+      doTest input27 (IndividualThings ["Foo"] "Foo") output27
   ]
 
-input1, output1 :: BS.ByteString
+doTest :: String -> RedundancyWarn -> String -> IO ()
+doTest input warn (BS.strip . BS.pack -> output) =
+  (@?= output) . BS.strip . BS.pack
+    =<< applyFix input warn
+
+applyFix :: String -> RedundancyWarn -> IO String
+applyFix input warn = do
+  parseResult <- EP.parseModuleFromString Paths.libdir "" input
+  case parseResult of
+    Left _ -> fail $ "parse failed: " <> input
+    Right (EP.makeDeltaAst ->
+            Ghc.L modLoc hsMod@Syn.HsModule{Syn.hsmodImports = imports}) ->
+      let mNewImports = fixRedundancyWarning warn imports
+       in pure $
+            maybe
+              input
+              (\newImports -> EP.exactPrint (Ghc.L modLoc hsMod { Syn.hsmodImports = newImports }))
+              mNewImports
+
+input1, output1 :: String
 input1  = "import Foo.Bar (foo, bar)"
 output1 = "import Foo.Bar (bar)"
 
-input2, output2 :: BS.ByteString
+input2, output2 :: String
 input2  = "import Foo.Bar (foo, bar)"
 output2 = "import Foo.Bar (foo)"
 
-input3, output3 :: BS.ByteString
+input3, output3 :: String
 input3  = "import Foo.Bar (foo, bar, baz)"
 output3 = "import Foo.Bar (bar)"
 
-input4, output4 :: BS.ByteString
+input4, output4 :: String
 input4  = "import Foo.Bar (foo, bar, baz)"
 output4 = "import Foo.Bar (foo, baz)"
 
-input5, output5 :: [BS.ByteString]
-input5  = [ "import Foo.Bar ( foo"
+input5, output5 :: String
+input5  = unlines
+          [ "import Foo.Bar ( foo"
           , "               , bar"
           , "               , baz"
           , "               )"
           ]
-output5 = [ "import Foo.Bar ( bar"
+output5 = unlines
+          [ "import Foo.Bar ( bar"
           , "               )"
           ]
 
-input6, output6 :: [BS.ByteString]
-input6  = [ "import Foo.Bar ( foo"
+input6, output6 :: String
+input6  = unlines
+          [ "import Foo.Bar ( foo"
           , "               , bar"
           , "               , baz"
           , "               )"
           ]
-output6 = [ "import Foo.Bar ( foo"
+output6 = unlines
+          [ "import Foo.Bar ( foo"
           , "               , baz"
           , "               )"
           ]
 
-input7, output7 :: [BS.ByteString]
-input7  = [ "import Foo.Bar"
+input7, output7 :: String
+input7  = unlines
+          [ "{-# LANGUAGE PatternSynonyms #-}"
+          , "import Foo.Bar"
           , "  ( foo"
-          , "  , pattern bar"
+          , "  , pattern Bar"
           , "  , baz"
           , "  )"
           ]
-output7 = [ "import Foo.Bar"
+output7 = unlines
+          [ "{-# LANGUAGE PatternSynonyms #-}"
+          , "import Foo.Bar"
           , "  ( foo"
           , "  , baz"
           , "  )"
           ]
 
-input8, output8 :: BS.ByteString
+input8, output8 :: String
 input8  = "import Foo (foo, Bar(one, two), baz)"
 output8 = "import Foo (foo, baz)"
 
-input9, output9 :: BS.ByteString
+input9, output9 :: String
 input9  = "import Foo (foo, Bar(one, two), baz)"
 output9 = "import Foo (foo, Bar(one), baz)"
 output9a = "import Foo (foo, Bar(two), baz)"
 
-input10, output10 :: BS.ByteString
+input10, output10 :: String
 input10  = "import Foo (foo, (+~), baz)"
 output10 = "import Foo (foo, baz)"
 
-input11, output11 :: BS.ByteString
+input11, output11 :: String
 input11  = "import Foo (foo, (:~:)(..), baz)"
 output11 = "import Foo (foo, baz)"
 
-input12, output12 :: BS.ByteString
+input12, output12 :: String
 input12  = "import Foo (foo, (:~:)(one, two), baz)"
 output12 = "import Foo (foo, (:~:)(one), baz)"
+output12a = "import Foo (foo, (:~:)(two), baz)"
 
-input13, output13 :: [BS.ByteString]
-input13 = [ "import Foo"
+input13, output13 :: String
+input13 = unlines
+          [ "import Foo"
           , "  (one, two, three)"
           , "import Bar"
           ]
-output13 = [ "import Bar" ]
+output13 = "import Bar"
 
-input14, output14 :: [BS.ByteString]
-input14 = [ "import Foo (one"
+input14, output14 :: String
+input14 = unlines
+          [ "import Foo (one"
           , "           ,two"
           , "           )"
           , "import Bar"
           ]
-output14 = [ "import Bar" ]
+output14 = "import Bar"
 
-input15, output15 :: [BS.ByteString]
-input15 = [ "import Foo"
+input15, output15 :: String
+input15 = unlines
+          [ "import Foo"
           , "import Bar"
           ]
-output15 = [ "import Bar" ]
+output15 = "import Bar"
 
 -- first match is a subsubstring of another term
-input16, output16 :: [BS.ByteString]
-input16 = [ "import Data.List (zip4, zip, zipWith3, zipWith, zipWith2, zip3)" ]
-output16 = [ "import Data.List (zip4, zipWith3, zipWith2, zip3)" ]
+input16, output16 :: String
+input16 = "import Data.List (zip4, zip, zipWith3, zipWith, zipWith2, zip3)"
+output16 = "import Data.List (zip4, zipWith3, zipWith2, zip3)"
 
-input17, output17 :: [BS.ByteString]
-input17 = [ "import Foo (Bar( Baz), foo)" ]
-output17 = [ "import Foo (Bar, foo)" ]
+input17, output17 :: String
+input17 = "import Foo (Bar( Baz), foo)"
+output17 = "import Foo (Bar, foo)"
 
-input18, output18 :: [BS.ByteString]
-input18 = [ "import Foo (foo, ( +  ))" ]
-output18 = [ "import Foo (foo)" ]
+input18, output18 :: String
+input18 = "import Foo (foo, ( +  ))"
+output18 = "import Foo (foo)"
 
-input19, output19 :: [BS.ByteString]
-input19 = [ "import Foo (foo, ( :+:  ) (.. ), bar)" ]
-output19 = [ "import Foo (foo, bar)" ]
+input19, output19 :: String
+input19 = "import Foo (foo, ( :+:  ) (.. ), bar)"
+output19 = "import Foo (foo, bar)"
 
-input20, output20 :: [BS.ByteString]
-input20 = [ "import Foo (foo, Foo (.. ))" ]
-output20 = [ "import Foo (foo)" ]
+input20, output20 :: String
+input20 = "import Foo (foo, Foo (.. ))"
+output20 = "import Foo (foo)"
 
-input21, output21 :: [BS.ByteString]
-input21 = [ "import Data.List.NonEmpty (NonEmpty((:|)), foo)" ]
-output21 = [ "import Data.List.NonEmpty (NonEmpty, foo)" ]
-output21a = [ "import Data.List.NonEmpty (foo)" ]
+input21, output21 :: String
+input21 = "import Data.List.NonEmpty (NonEmpty((:|)), foo)"
+output21 = "import Data.List.NonEmpty (NonEmpty, foo)"
+output21a = "import Data.List.NonEmpty (foo)"
 
-input22, output22 :: [BS.ByteString]
-input22 = [ "import Data.List (zipzip, zip)" ]
-output22 = [ "import Data.List (zipzip)" ]
+input22, output22 :: String
+input22 = "import Data.List (zipzip, zip)"
+output22 = "import Data.List (zipzip)"
 
-input23, output23 :: [BS.ByteString]
-input23 = [ "import Data.List.NonEmpty (NonEmpty((:|), bar), foo)" ]
-output23 = [ "import Data.List.NonEmpty (NonEmpty(bar), foo)" ]
+input23, output23 :: String
+input23 = "import Data.List.NonEmpty (NonEmpty((:|), bar), foo)"
+output23 = "import Data.List.NonEmpty (NonEmpty(bar), foo)"
 
-input24, output24 :: [BS.ByteString]
-input24 = [ "import Foo (Foo(foo))" ]
-output24 = [ "import Foo (Foo)" ]
+input24, output24 :: String
+input24 = "import Foo (Foo(foo))"
+output24 = "import Foo (Foo)"
 
-input25, output25 :: [BS.ByteString]
-input25 = [ "import Foo (Foo(foo), bar)" ]
-output25 = [ "import Foo (Foo, bar)" ]
+input25, output25 :: String
+input25 = "import Foo (Foo(foo), bar)"
+output25 = "import Foo (Foo, bar)"
+
+input26, output26 :: String
+input26 = "import Foo (Foo, Bar(Foo))"
+output26 = "import Foo (Foo, Bar(Foo))"
+
+input27, output27 :: String
+input27 = "import Foo (Foo(Foo))"
+output27 = "import Foo (Foo(Foo))"

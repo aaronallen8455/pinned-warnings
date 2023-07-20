@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -16,6 +17,7 @@ import qualified Data.List as List
 import           Data.Maybe
 import           Data.Monoid (Alt(..))
 import qualified Data.Map.Strict as M
+import qualified Data.Set as Set
 import qualified GHC.Paths as Paths
 import qualified Language.Haskell.GHC.ExactPrint as EP
 import qualified Language.Haskell.Syntax as Syn
@@ -97,64 +99,128 @@ fixRedundancyWarning (IndividualThings things modName) imports = do
     <- Just $ break (matchModule modName) imports
   (Syn.Exactly, Ghc.L ieLoc lies) <- Syn.ideclImportList matchedImp
 
-  let importResults = removeRedundantThings things <$> lies
+  importResults <- traverse (removeRedundantThings things) lies
 
-  -- Fail if there is not a single import that was modified or removed
-  guard $ (== 1) . length $ filter isEffected importResults
-  let newLies = mapMaybe unwrapResult importResults
+  let efNames = effectedNames importResults
+  -- Assert that a thing didn't occur in two or more places and is therefore ambiguous
+  guard $ Set.size (Set.fromList efNames) == length efNames
+
+  let newLies = transferLeadingAnchor importResults lies
+              . removeTrailingComma importResults
+              $ mapMaybe unwrapResult importResults
+
   Just $ before
       ++ Ghc.L impLoc matchedImp
            { Syn.ideclImportList = Just (Syn.Exactly, Ghc.L ieLoc newLies) }
        : after
+
+-- remove trailing comma from the last IE if the previous last was removed
+removeTrailingComma
+  :: [ImportResult (Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn Ghc.AnnListItem)) a)]
+  -> [Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn Ghc.AnnListItem)) a]
+  -> [Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn Ghc.AnnListItem)) a]
+removeTrailingComma importResults ls
+  | Effected _ Nothing : _ <- take 1 $ reverse importResults
+  , Ghc.L srcSpan ie : rest <- take 1 $ reverse ls
+  = let newSrcSpan = srcSpan
+          { Ghc.ann = case Ghc.ann srcSpan of
+              Ghc.EpAnn entry _ comments ->
+                Ghc.EpAnn
+                  { Ghc.entry = entry
+                  , Ghc.anns = Ghc.AnnListItem {Ghc.lann_trailing = []}
+                  , Ghc.comments = comments
+                  }
+              Ghc.EpAnnNotUsed -> Ghc.EpAnnNotUsed
+          }
+     in reverse $ Ghc.L newSrcSpan ie : rest
+  | otherwise = ls
+
+transferLeadingAnchor
+  :: [ImportResult (Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn ann)) a)]
+  -> [Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn ann)) a]
+  -> [Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn ann)) a]
+  -> [Ghc.GenLocated (Ghc.SrcSpanAnn' (Ghc.EpAnn ann)) a]
+transferLeadingAnchor importResults beforeTransform ls
+  | Effected _ Nothing : _ <- take 1 importResults
+  , Ghc.L srcSpan ie : rest <- take 1 ls
+  , Ghc.L oldSrcSpan _ : _ <- take 1 beforeTransform
+  = let newSrcSpan = srcSpan
+          { Ghc.ann = case Ghc.ann srcSpan of
+              Ghc.EpAnn e anns comments ->
+                Ghc.EpAnn { Ghc.entry = case Ghc.ann oldSrcSpan of
+                                          Ghc.EpAnn entry _ _ -> entry
+                                          _ -> e
+                          , Ghc.anns = anns
+                          , Ghc.comments = comments
+                          }
+              Ghc.EpAnnNotUsed -> Ghc.EpAnnNotUsed
+          }
+     in Ghc.L newSrcSpan ie : rest
+  | otherwise = ls
 
 matchModule :: String -> Syn.LImportDecl Ghc.GhcPs -> Bool
 matchModule modName
   = (== modName) . Syn.moduleNameString
   . Ghc.unLoc . Syn.ideclName . Ghc.unLoc
 
-data ImportResult
-  = NoOp (Syn.LIE Ghc.GhcPs)
-  | Effected (Maybe (Syn.LIE Ghc.GhcPs))
-  | Ambiguous
+data ImportResult a
+  = NoOp a
+  | Effected [String] (Maybe a)
 
-isEffected :: ImportResult -> Bool
-isEffected Effected{} = True
-isEffected Ambiguous = True
-isEffected NoOp{} = False
-
-unwrapResult :: ImportResult -> Maybe (Syn.LIE Ghc.GhcPs)
+unwrapResult :: ImportResult a -> Maybe a
 unwrapResult = \case
   NoOp i -> Just i
-  Effected i -> i
-  Ambiguous -> Nothing
+  Effected _ i -> i
 
-removeRedundantThings :: [String] -> Syn.LIE Ghc.GhcPs -> ImportResult
+effectedNames :: [ImportResult a] -> [String]
+effectedNames rs = (`concatMap` rs) $ \case
+  NoOp _ -> []
+  Effected ns _ -> ns
+
+removeRedundantThings :: [String] -> Syn.LIE Ghc.GhcPs -> Maybe (ImportResult (Syn.LIE Ghc.GhcPs))
 removeRedundantThings things lie@(Ghc.L ieLoc ie) =
   let nameMatches = case ie of
-        Syn.IEVar _ (Ghc.L _ (Ghc.occName -> occN)) ->
-          Ghc.occNameString occN `elem` things
-        Syn.IEThingAbs _ (Ghc.L _ (Ghc.occName -> occN)) ->
-          Ghc.occNameString occN `elem` things
-        Syn.IEThingAll _ (Ghc.L _ (Ghc.occName -> occN)) ->
-          Ghc.occNameString occN `elem` things
-        Syn.IEThingWith _ (Ghc.L _ (Ghc.occName -> occN)) _ _ ->
-          Ghc.occNameString occN `elem` things
-        Syn.IEModuleContents{} -> False
-        Syn.IEGroup{} -> False
-        Syn.IEDoc{} -> False
-        Syn.IEDocNamed{} -> False
+        Syn.IEVar _ (Ghc.L _ (Ghc.occName -> occN)) -> do
+          guard $ Ghc.occNameString occN `elem` things
+          Just $ Ghc.occNameString occN
+        Syn.IEThingAbs _ (Ghc.L _ (Ghc.occName -> occN)) -> do
+          guard $ Ghc.occNameString occN `elem` things
+          Just $ Ghc.occNameString occN
+        Syn.IEThingAll _ (Ghc.L _ (Ghc.occName -> occN)) -> do
+          guard $ Ghc.occNameString occN `elem` things
+          Just $ Ghc.occNameString occN
+        Syn.IEThingWith _ (Ghc.L _ (Ghc.occName -> occN)) _ _ -> do
+          guard $ Ghc.occNameString occN `elem` things
+          Just $ Ghc.occNameString occN
+        Syn.IEModuleContents{} -> Nothing
+        Syn.IEGroup{} -> Nothing
+        Syn.IEDoc{} -> Nothing
+        Syn.IEDocNamed{} -> Nothing
       matchedAssocThing = case ie of
         Syn.IEThingWith x n w assocWrappedNames -> do -- Maybe
-          let assocNameMatches = (`elem` things) . Ghc.occNameString
-                               . Ghc.occName . Ghc.unLoc
-          (before, _ : rest) <- Just $ break assocNameMatches assocWrappedNames
-          Just $ Syn.IEThingWith x n w (before ++ rest)
+          let results = do -- List
+                assocName <- assocWrappedNames
+                let nameStr = Ghc.occNameString . Ghc.occName $ Ghc.unLoc assocName
+                pure $ if nameStr `elem` things
+                   then Effected [nameStr] Nothing
+                   else NoOp assocName
+              newAssocNames = mapMaybe unwrapResult results
+          guard $ length newAssocNames /= length assocWrappedNames
+          if null newAssocNames
+             then Just (Syn.IEThingAbs x n, effectedNames results)
+             else Just
+                . (, effectedNames results)
+                . Syn.IEThingWith x n w
+                . transferLeadingAnchor results assocWrappedNames
+                $ removeTrailingComma results newAssocNames
+
         _ -> Nothing
    in case (nameMatches, matchedAssocThing) of
-        (True, Just _) -> Ambiguous
-        (True, _) -> Effected Nothing
-        (_, Just newIE) -> Effected $ Just (Ghc.L ieLoc newIE)
-        (False, Nothing) -> NoOp lie
+        -- Don't allow ambiguous occurences of the identifier, i.e. both a data con and a type
+        (Just _, Just _) -> Nothing
+        (Just n, _) -> Just $ Effected [n] Nothing
+        (_, Just (newIE, ns)) -> Just . Effected ns $ Just (Ghc.L ieLoc newIE)
+        (Nothing, Nothing) -> Just $ NoOp lie
 
 --------------------------------------------------------------------------------
 -- Parsing
