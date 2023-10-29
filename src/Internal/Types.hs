@@ -24,8 +24,6 @@ newtype Warning = Warning
       :: Ghc.MsgEnvelope Ghc.DiagnosticMessage
 #elif MIN_VERSION_ghc(9,2,0)
       :: Ghc.MsgEnvelope Ghc.DecoratedSDoc
-#else
-      :: Ghc.WarnMsg
 #endif
   }
 
@@ -51,8 +49,6 @@ showWarning =
               }
    in foldMap (Ghc.showSDocOneLine sdocCtx)
       . Ghc.unDecorated . Ghc.errMsgDiagnostic . unWarning
-#else
-  show . unWarning
 #endif
 
 instance Eq Warning where

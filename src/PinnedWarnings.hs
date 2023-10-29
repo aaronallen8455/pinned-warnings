@@ -38,11 +38,7 @@ plugin =
   Ghc.defaultPlugin
     { Ghc.tcPlugin           = const $ Just tcPlugin
     , Ghc.parsedResultAction = const resetPinnedWarnsForMod
-#if MIN_VERSION_ghc(9,2,0)
     , Ghc.driverPlugin       = const (pure . addWarningCapture)
-#else
-    , Ghc.dynflagsPlugin     = const (pure . addWarningCapture)
-#endif
     , Ghc.pluginRecompile    = Ghc.purePlugin
     }
 
@@ -100,7 +96,7 @@ checkWanteds pluginState
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
   where
-    go ct@Ghc.CDictCan { Ghc.cc_class = cls }
+    go ct@(Ghc.CDictCan' _ cls _)
       | Ghc.classTyCon cls == showWarningsClass pluginState = do
           counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
 
@@ -154,9 +150,6 @@ addWarningsToContext = do
 #elif MIN_VERSION_ghc(9,2,0)
     $ \messages ->
         (Ghc.mkMessages pinnedWarns `Ghc.unionMessages` messages, ())
-#else
-    $ \(warnings, errors) ->
-        ((Ghc.unionBags pinnedWarns warnings, errors), ())
 #endif
 
 -- | Remove warnings for modules that no longer exist
@@ -207,8 +200,8 @@ addWarningCapture hscEnv =
 #else
         Ghc.MCDiagnostic Ghc.SevWarning _
 #endif
-          | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
-          , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
+          | Ghc.RealSrcLoc start _ <- Ghc.srcSpanStart srcSpan
+          , Ghc.RealSrcLoc end _ <- Ghc.srcSpanEnd srcSpan
           , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
           -> do
             let diag =
@@ -217,12 +210,9 @@ addWarningCapture hscEnv =
                     , Ghc.diagReason = Ghc.WarningWithoutFlag
                     , Ghc.diagHints = []
                     }
-                warn = Warning Ghc.MsgEnvelope
-                  { Ghc.errMsgSpan = srcSpan
-                  , Ghc.errMsgContext = Ghc.neverQualify
-                  , Ghc.errMsgDiagnostic = diag
-                  , Ghc.errMsgSeverity = Ghc.SevWarning
-                  }
+                diagOpts = Ghc.initDiagOpts $ Ghc.hsc_dflags hscEnv
+                warn = Warning $
+                  Ghc.mkMsgEnvelope diagOpts srcSpan Ghc.neverQualify diag
             addWarningToGlobalState start end modFile warn
         _ -> pure ()
       logAction dynFlags messageClass srcSpan sdoc
@@ -237,8 +227,8 @@ addWarningCapture hscEnv =
     warningsHook logAction dynFlags warnReason severity srcSpan sdoc = do
       case severity of
         Ghc.SevWarning
-          | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
-          , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
+          | Ghc.RealSrcLoc start _ <- Ghc.srcSpanStart srcSpan
+          , Ghc.RealSrcLoc end _ <- Ghc.srcSpanEnd srcSpan
           , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
           -> do
             let warn = Warning $ Ghc.mkPlainWarnMsg srcSpan sdoc
@@ -246,23 +236,6 @@ addWarningCapture hscEnv =
         _ -> pure ()
 
       logAction dynFlags warnReason severity srcSpan sdoc
-#else
-addWarningCapture :: Ghc.DynFlags -> Ghc.DynFlags
-addWarningCapture dynFlags = do
-  dynFlags
-    { Ghc.log_action = Ghc.log_action' (Ghc.log_action dynFlags) $
-      \dyn severity srcSpan msgDoc -> do
-        case severity of
-          Ghc.SevWarning
-            | Ghc.RealSrcLoc' start <- Ghc.srcSpanStart srcSpan
-            , Ghc.RealSrcLoc' end <- Ghc.srcSpanEnd srcSpan
-            , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
-            -> do
-              let warn = Warning
-                       $ Ghc.mkWarnMsg dyn srcSpan Ghc.alwaysQualify msgDoc
-              addWarningToGlobalState start end modFile warn
-          _ -> pure ()
-    }
 #endif
 
 -- | Adds a warning to the global state variable
