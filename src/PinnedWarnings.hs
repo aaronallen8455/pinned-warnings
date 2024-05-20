@@ -8,7 +8,9 @@ import           Control.Concurrent.MVar
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.IORef
+#if !MIN_VERSION_ghc(9,10,0)
 import           Data.List
+#endif
 import qualified Data.Map.Strict as M
 import           Data.Maybe
 import qualified Data.Set as S
@@ -147,9 +149,6 @@ addWarningsToContext = do
     $ \messages ->
         (Ghc.mkMessages ((fmap . fmap) Ghc.TcRnUnknownMessage pinnedWarns)
           `Ghc.unionMessages` messages, ())
-#elif MIN_VERSION_ghc(9,2,0)
-    $ \messages ->
-        (Ghc.mkMessages pinnedWarns `Ghc.unionMessages` messages, ())
 #endif
 
 -- | Remove warnings for modules that no longer exist
@@ -185,7 +184,6 @@ resetPinnedWarnsForMod modSummary parsedModule = do
   pure parsedModule
 
 -- | Taps into the log action to capture the warnings that GHC emits.
-#if MIN_VERSION_ghc(9,4,0)
 addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
 addWarningCapture hscEnv =
   hscEnv
@@ -216,27 +214,6 @@ addWarningCapture hscEnv =
             addWarningToGlobalState start end modFile warn
         _ -> pure ()
       logAction dynFlags messageClass srcSpan sdoc
-#elif MIN_VERSION_ghc(9,2,0)
-addWarningCapture :: Ghc.HscEnv -> Ghc.HscEnv
-addWarningCapture hscEnv =
-  hscEnv
-    { Ghc.hsc_logger = Ghc.pushLogHook warningsHook (Ghc.hsc_logger hscEnv)
-    }
-  where
-    warningsHook :: Ghc.LogAction -> Ghc.LogAction
-    warningsHook logAction dynFlags warnReason severity srcSpan sdoc = do
-      case severity of
-        Ghc.SevWarning
-          | Ghc.RealSrcLoc start _ <- Ghc.srcSpanStart srcSpan
-          , Ghc.RealSrcLoc end _ <- Ghc.srcSpanEnd srcSpan
-          , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
-          -> do
-            let warn = Warning $ Ghc.mkPlainWarnMsg srcSpan sdoc
-            addWarningToGlobalState start end modFile warn
-        _ -> pure ()
-
-      logAction dynFlags warnReason severity srcSpan sdoc
-#endif
 
 -- | Adds a warning to the global state variable
 addWarningToGlobalState
