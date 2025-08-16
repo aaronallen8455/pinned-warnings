@@ -50,9 +50,7 @@ tcPlugin =
     { Ghc.tcPluginInit  = initTcPlugin
     , Ghc.tcPluginSolve = \pluginState _ _ -> checkWanteds pluginState
     , Ghc.tcPluginStop  = const $ pure ()
-#if MIN_VERSION_ghc(9,4,0)
     , Ghc.tcPluginRewrite = mempty
-#endif
     }
 
 data PluginState =
@@ -76,11 +74,7 @@ lookupClass :: String -> Ghc.TcPluginM Ghc.TyCon
 lookupClass className = do
   result <- Ghc.findImportedModule
               (Ghc.mkModuleName "ShowWarnings")
-#if MIN_VERSION_ghc(9,4,0)
               Ghc.NoPkgQual
-#else
-              (Just "pinned-warnings")
-#endif
 
   case result of
     Ghc.Found _ mod' -> do
@@ -93,7 +87,7 @@ lookupClass className = do
 -- warnings into GHC.
 checkWanteds :: PluginState
              -> [Ghc.Ct]
-             -> Ghc.TcPluginM Ghc.TcPluginResult'
+             -> Ghc.TcPluginM Ghc.TcPluginSolveResult
 checkWanteds pluginState
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
@@ -141,15 +135,9 @@ addWarningsToContext = do
              <$> Ghc.tcPluginIO (readMVar globalState)
 
   Ghc.tcPluginIO . atomicModifyIORef' errsRef
-#if MIN_VERSION_ghc(9,6,0)
     $ \messages ->
         (Ghc.mkMessages ((fmap . fmap) Ghc.mkTcRnUnknownMessage pinnedWarns)
           `Ghc.unionMessages` messages, ())
-#elif MIN_VERSION_ghc(9,4,0)
-    $ \messages ->
-        (Ghc.mkMessages ((fmap . fmap) Ghc.TcRnUnknownMessage pinnedWarns)
-          `Ghc.unionMessages` messages, ())
-#endif
 
 -- | Remove warnings for modules that no longer exist
 pruneDeleted :: IO ()
@@ -168,13 +156,8 @@ pruneDeleted = modifyMVar_ globalState $ \warns -> do
 -- This occurs before any new warnings are captured for the module.
 resetPinnedWarnsForMod
   :: Ghc.ModSummary
-#if MIN_VERSION_ghc(9,4,0)
   -> Ghc.ParsedResult
   -> Ghc.Hsc Ghc.ParsedResult
-#else
-  -> Ghc.HsParsedModule
-  -> Ghc.Hsc Ghc.HsParsedModule
-#endif
 resetPinnedWarnsForMod modSummary parsedModule = do
   let modFile = fromString $ Ghc.ms_hspp_file modSummary
 
@@ -193,11 +176,7 @@ addWarningCapture hscEnv =
     warningsHook :: Ghc.LogAction -> Ghc.LogAction
     warningsHook logAction dynFlags messageClass srcSpan sdoc = do
       case messageClass of
-#if MIN_VERSION_ghc(9,6,0)
         Ghc.MCDiagnostic Ghc.SevWarning _ _
-#else
-        Ghc.MCDiagnostic Ghc.SevWarning _
-#endif
           | Ghc.RealSrcLoc start _ <- Ghc.srcSpanStart srcSpan
           , Ghc.RealSrcLoc end _ <- Ghc.srcSpanEnd srcSpan
           , Just modFile <- Ghc.srcSpanFileName_maybe srcSpan
