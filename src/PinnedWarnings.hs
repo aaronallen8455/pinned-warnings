@@ -72,16 +72,19 @@ initTcPlugin =
 -- | Get a reference to a class from the @ShowWarnings@ module
 lookupClass :: String -> Ghc.TcPluginM Ghc.TyCon
 lookupClass className = do
-  result <- Ghc.findImportedModule
-              (Ghc.mkModuleName "ShowWarnings")
-              Ghc.NoPkgQual
+  hscEnv <- Ghc.getTopEnv
+  let modName = Ghc.mkModuleName "ShowWarnings"
+      pkgQual = Ghc.renamePkgQual (Ghc.hsc_unit_env hscEnv) modName (Just "pinned-warnings")
 
-  case result of
-    Ghc.Found _ mod' -> do
-      name <- Ghc.lookupOrig mod' $ Ghc.mkTcOcc className
-      Ghc.classTyCon <$> Ghc.tcLookupClass name
+      unit = case pkgQual of
+        Ghc.ThisPkg u -> u
+        Ghc.OtherPkg u -> u
+        _ -> error "'pinned-warnings' package not found"
 
-    _ -> error "ShowWarnings module not found"
+      swMod = Ghc.mkModule (Ghc.RealUnit (Ghc.Definite unit) :: Ghc.Unit) modName
+
+  name <- Ghc.lookupOrig swMod $ Ghc.mkTcOcc className
+  Ghc.classTyCon <$> Ghc.tcLookupClass name
 
 -- | If any wanted constraints are for 'ShowWarnings', then inject the pinned
 -- warnings into GHC.

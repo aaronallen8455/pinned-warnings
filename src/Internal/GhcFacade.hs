@@ -25,6 +25,8 @@ import GHC.Utils.Error as X
 import GHC.Utils.Logger as X
 import GHC.Utils.Outputable as X
 import GHC.Driver.Config.Diagnostic as X
+import GHC.Rename.Names as X
+import GHC.Unit.Types as X
 
 pattern CDictCan'
   :: CtEvidence
