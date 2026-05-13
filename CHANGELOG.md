@@ -1,5 +1,9 @@
 # Revision history for pinned-warnings
 
+## 0.1.4.0
+* Support GHC 9.14
+* Drop support for GHC 9.6
+
 ## 0.1.3.0
 * Support GHC 9.12.x
 * Drop support for GHC 9.4

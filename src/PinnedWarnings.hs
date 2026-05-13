@@ -92,7 +92,7 @@ checkWanteds pluginState
     = fmap (flip Ghc.TcPluginOk [] . catMaybes)
     . traverse go
   where
-    go ct@(Ghc.CDictCan' _ cls _)
+    go ct@(Ghc.CDictCan (Ghc.DictCt _ cls _ _))
       | Ghc.classTyCon cls == showWarningsClass pluginState = do
           counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
 
@@ -101,7 +101,10 @@ checkWanteds pluginState
           when (counter == 2) addWarningsToContext
           incrementCounter
 
-          pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
+          pure $ Just
+            ( Ghc.EvExpr $ Ghc.mkCoreConApps (Ghc.classDataCon cls) [Ghc.unitExpr]
+            , ct
+            )
 
       | Ghc.classTyCon cls == fixWarningsClass pluginState = do
           counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
@@ -109,7 +112,10 @@ checkWanteds pluginState
           when (counter == 0) (Ghc.tcPluginIO fixWarnings)
           incrementCounter
 
-          pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
+          pure $ Just
+            ( Ghc.EvExpr $ Ghc.mkCoreConApps (Ghc.classDataCon cls) [Ghc.unitExpr]
+            , ct
+            )
 
       | Ghc.classTyCon cls == clearWarningsClass pluginState = do
           counter <- Ghc.tcPluginIO $ readIORef (counterRef pluginState)
@@ -117,7 +123,10 @@ checkWanteds pluginState
           when (counter == 0) (Ghc.tcPluginIO clearWarnings)
           incrementCounter
 
-          pure $ Just (Ghc.EvExpr Ghc.unitExpr, ct)
+          pure $ Just
+            ( Ghc.EvExpr $ Ghc.mkCoreConApps (Ghc.classDataCon cls) [Ghc.unitExpr]
+            , ct
+            )
 
     go _ = pure Nothing
 

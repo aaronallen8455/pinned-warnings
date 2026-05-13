@@ -29,11 +29,7 @@ showWarning =
               }
    in foldMap (Ghc.showSDocOneLine sdocCtx)
       . Ghc.unDecorated
-#if MIN_VERSION_ghc(9,6,0)
       . Ghc.diagnosticMessage Ghc.NoDiagnosticOpts
-#else
-      . Ghc.diagnosticMessage
-#endif
       . Ghc.errMsgDiagnostic . unWarning
 
 instance Eq Warning where
